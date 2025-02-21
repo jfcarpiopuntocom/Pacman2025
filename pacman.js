@@ -3,8 +3,8 @@
     // Constants Configuration
     const CONFIG = Object.freeze({
         TILE_SIZE: 16,
-        CANVAS_WIDTH: 448,  // 28 * 16
-        CANVAS_HEIGHT: 496, // 31 * 16
+        CANVAS_WIDTH: 448,
+        CANVAS_HEIGHT: 496,
         COLORS: {
             BACKGROUND: '#000000',
             WALL: '#0000FF',
@@ -25,7 +25,6 @@
         }
     });
 
-    // Maze Layout
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
@@ -61,12 +60,14 @@
         "############################"
     ]);
 
-    // Canvas Initialization
+    // Canvas Setup
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { alpha: false });
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
+    canvas.tabIndex = 0; // Ensure canvas can receive focus
     document.body.appendChild(canvas);
+    canvas.focus(); // Set initial focus
 
     // Utility Functions
     const Utils = {
@@ -84,7 +85,8 @@
     // Audio Module
     class AudioManager {
         constructor() {
-            this.context = window.AudioContext ? new AudioContext() : null;
+            this.context = window.AudioContext || window.webkitAudioContext ? 
+                new (window.AudioContext || window.webkitAudioContext)() : null;
         }
 
         play(frequency, duration = CONFIG.AUDIO.DURATION) {
@@ -110,7 +112,7 @@
                 y: 23 * CONFIG.TILE_SIZE,
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
-                nextDirection: 0,
+                nextDirection: null, // Changed to null for better control
                 radius: 7,
                 mouthAngle: 0,
                 lives: 3,
@@ -134,7 +136,7 @@
             this.pacman.x = 13.5 * CONFIG.TILE_SIZE;
             this.pacman.y = 23 * CONFIG.TILE_SIZE;
             this.pacman.direction = 0;
-            this.pacman.nextDirection = 0;
+            this.pacman.nextDirection = null;
             this.ghosts.forEach((g, i) => {
                 g.x = (13 + (i % 2)) * CONFIG.TILE_SIZE;
                 g.y = (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE;
@@ -143,7 +145,7 @@
         }
     }
 
-    // Core Game Logic
+    // Game Logic
     class PacmanGame {
         constructor() {
             this.entities = new EntityManager();
@@ -152,6 +154,7 @@
             this.highScore = parseInt(localStorage.getItem('pacmanHigh') || '0');
             this.state = 'playing';
             this.lastTime = 0;
+            this.keysPressed = new Set();
             this.initMazeItems();
             this.bindControls();
             this.loop(performance.now());
@@ -182,11 +185,30 @@
                 'ArrowUp': -Math.PI/2,
                 'ArrowDown': Math.PI/2
             };
-            document.addEventListener('keydown', e => {
+
+            // Use canvas for events to ensure focus
+            canvas.addEventListener('keydown', (e) => {
+                e.preventDefault(); // Prevent scrolling
                 if (keyMap[e.key]) {
+                    this.keysPressed.add(e.key);
                     this.entities.pacman.nextDirection = keyMap[e.key];
                 }
             });
+
+            canvas.addEventListener('keyup', (e) => {
+                e.preventDefault();
+                this.keysPressed.delete(e.key);
+                // If last direction key is released, check for new direction
+                if (this.keysPressed.size > 0) {
+                    const lastKey = Array.from(this.keysPressed).pop();
+                    this.entities.pacman.nextDirection = keyMap[lastKey] || null;
+                } else {
+                    this.entities.pacman.nextDirection = null;
+                }
+            });
+
+            // Ensure canvas stays focusable
+            canvas.addEventListener('click', () => canvas.focus());
         }
 
         canMove(x, y, radius = 0) {
@@ -205,15 +227,19 @@
             const speed = pac.speed * delta / 16;
 
             // Pacman movement
-            const newX = pac.x + Math.cos(pac.direction) * speed;
-            const newY = pac.y + Math.sin(pac.direction) * speed;
-            if (this.canMove(newX, newY, pac.radius)) {
-                pac.x = newX;
-                pac.y = newY;
-            }
-            if (this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
+            if (pac.nextDirection !== null && 
+                this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
                            pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
                 pac.direction = pac.nextDirection;
+            }
+
+            if (pac.direction !== null) {
+                const newX = pac.x + Math.cos(pac.direction) * speed;
+                const newY = pac.y + Math.sin(pac.direction) * speed;
+                if (this.canMove(newX, newY, pac.radius)) {
+                    pac.x = newX;
+                    pac.y = newY;
+                }
             }
 
             // Power mode
@@ -376,11 +402,15 @@
         }
     }
 
-    // Bootstrap
+    // Bootstrap with compatibility check
     try {
+        if (!canvas.getContext) throw new Error('Canvas not supported');
+        if (!window.requestAnimationFrame) {
+            window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
+        }
         new PacmanGame();
     } catch (e) {
         console.error('Initialization failed:', e);
-        document.body.textContent = 'Failed to start Pacman. Check console.';
+        document.body.textContent = 'Pacman failed to start. Your browser may not be supported.';
     }
 })();
