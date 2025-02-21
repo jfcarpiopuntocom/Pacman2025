@@ -65,9 +65,9 @@
     const ctx = canvas.getContext('2d', { alpha: false });
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
-    canvas.tabIndex = 0; // Ensure canvas can receive focus
+    canvas.tabIndex = 0; // Make canvas focusable
     document.body.appendChild(canvas);
-    canvas.focus(); // Set initial focus
+    canvas.focus();
 
     // Utility Functions
     const Utils = {
@@ -85,7 +85,7 @@
     // Audio Module
     class AudioManager {
         constructor() {
-            this.context = window.AudioContext || window.webkitAudioContext ? 
+            this.context = window.AudioContext || window.webkitAudioContext ?
                 new (window.AudioContext || window.webkitAudioContext)() : null;
         }
 
@@ -94,7 +94,7 @@
             try {
                 const osc = this.context.createOscillator();
                 osc.type = 'square';
-                osc.frequency.setValueAtTime(frequency, this.context.currentTime);
+                osc.frequency.value = frequency;
                 osc.connect(this.context.destination);
                 osc.start();
                 osc.stop(this.context.currentTime + duration / 1000);
@@ -112,7 +112,7 @@
                 y: 23 * CONFIG.TILE_SIZE,
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
-                nextDirection: null, // Changed to null for better control
+                nextDirection: 0,
                 radius: 7,
                 mouthAngle: 0,
                 lives: 3,
@@ -136,7 +136,7 @@
             this.pacman.x = 13.5 * CONFIG.TILE_SIZE;
             this.pacman.y = 23 * CONFIG.TILE_SIZE;
             this.pacman.direction = 0;
-            this.pacman.nextDirection = null;
+            this.pacman.nextDirection = 0;
             this.ghosts.forEach((g, i) => {
                 g.x = (13 + (i % 2)) * CONFIG.TILE_SIZE;
                 g.y = (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE;
@@ -157,7 +157,7 @@
             this.keysPressed = new Set();
             this.initMazeItems();
             this.bindControls();
-            this.loop(performance.now());
+            this.startGameLoop();
         }
 
         initMazeItems() {
@@ -183,32 +183,37 @@
                 'ArrowLeft': Math.PI,
                 'ArrowRight': 0,
                 'ArrowUp': -Math.PI/2,
-                'ArrowDown': Math.PI/2
+                'ArrowDown': Math.PI/2,
+                'a': Math.PI,      // Left
+                'd': 0,           // Right
+                'w': -Math.PI/2,  // Up
+                's': Math.PI/2    // Down
             };
 
-            // Use canvas for events to ensure focus
             canvas.addEventListener('keydown', (e) => {
-                e.preventDefault(); // Prevent scrolling
-                if (keyMap[e.key]) {
-                    this.keysPressed.add(e.key);
-                    this.entities.pacman.nextDirection = keyMap[e.key];
+                e.preventDefault();
+                if (keyMap[e.key.toLowerCase()]) {
+                    this.keysPressed.add(e.key.toLowerCase());
+                    this.entities.pacman.nextDirection = keyMap[e.key.toLowerCase()];
                 }
             });
 
             canvas.addEventListener('keyup', (e) => {
                 e.preventDefault();
-                this.keysPressed.delete(e.key);
-                // If last direction key is released, check for new direction
+                this.keysPressed.delete(e.key.toLowerCase());
                 if (this.keysPressed.size > 0) {
                     const lastKey = Array.from(this.keysPressed).pop();
-                    this.entities.pacman.nextDirection = keyMap[lastKey] || null;
+                    this.entities.pacman.nextDirection = keyMap[lastKey];
                 } else {
-                    this.entities.pacman.nextDirection = null;
+                    // Don't stop movement, keep last direction
+                    // this.entities.pacman.nextDirection = this.entities.pacman.direction;
                 }
             });
 
-            // Ensure canvas stays focusable
-            canvas.addEventListener('click', () => canvas.focus());
+            // Ensure focus
+            canvas.addEventListener('click', () => {
+                canvas.focus();
+            });
         }
 
         canMove(x, y, radius = 0) {
@@ -227,19 +232,17 @@
             const speed = pac.speed * delta / 16;
 
             // Pacman movement
-            if (pac.nextDirection !== null && 
-                this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
-                           pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
-                pac.direction = pac.nextDirection;
+            const newX = pac.x + Math.cos(pac.direction) * speed;
+            const newY = pac.y + Math.sin(pac.direction) * speed;
+
+            if (this.canMove(newX, newY, pac.radius)) {
+                pac.x = newX;
+                pac.y = newY;
             }
 
-            if (pac.direction !== null) {
-                const newX = pac.x + Math.cos(pac.direction) * speed;
-                const newY = pac.y + Math.sin(pac.direction) * speed;
-                if (this.canMove(newX, newY, pac.radius)) {
-                    pac.x = newX;
-                    pac.y = newY;
-                }
+            if (this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
+                           pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
+                pac.direction = pac.nextDirection;
             }
 
             // Power mode
@@ -273,8 +276,7 @@
             this.entities.ghosts.forEach(ghost => {
                 const dx = pac.x - ghost.x;
                 const dy = pac.y - ghost.y;
-                const targetAngle = pac.powerMode ? 
-                    Utils.randomDirection() : Math.atan2(dy, dx);
+                const targetAngle = pac.powerMode ? Utils.randomDirection() : Math.atan2(dy, dx);
                 ghost.direction = targetAngle;
                 const ghostX = ghost.x + Math.cos(ghost.direction) * ghost.speed * delta / 16;
                 const ghostY = ghost.y + Math.sin(ghost.direction) * ghost.speed * delta / 16;
@@ -381,36 +383,39 @@
             }
         }
 
-        loop(timestamp) {
-            if (!this.lastTime) this.lastTime = timestamp;
-            const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
-            this.lastTime = timestamp;
+        startGameLoop() {
+            const loop = (timestamp) => {
+                if (!this.lastTime) this.lastTime = timestamp;
+                const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
+                this.lastTime = timestamp;
 
-            try {
-                if (this.state === 'playing') {
-                    this.update(delta);
+                try {
+                    if (this.state === 'playing') {
+                        this.update(delta);
+                    }
+                    this.render(timestamp);
+                    requestAnimationFrame(loop);
+                } catch (error) {
+                    console.error('Game loop error:', error);
+                    this.state = 'error';
+                    ctx.fillStyle = CONFIG.COLORS.TEXT;
+                    ctx.font = '20px Arial';
+                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height/2);
                 }
-                this.render(timestamp);
-                requestAnimationFrame(t => this.loop(t));
-            } catch (error) {
-                console.error('Game loop error:', error);
-                this.state = 'error';
-                ctx.fillStyle = CONFIG.COLORS.TEXT;
-                ctx.font = '20px Arial';
-                ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height/2);
-            }
+            };
+            requestAnimationFrame(loop);
         }
     }
 
-    // Bootstrap with compatibility check
+    // Bootstrap
     try {
         if (!canvas.getContext) throw new Error('Canvas not supported');
         if (!window.requestAnimationFrame) {
-            window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
+            window.requestAnimationFrame = (cb) => setTimeout(cb, 16);
         }
         new PacmanGame();
     } catch (e) {
         console.error('Initialization failed:', e);
-        document.body.textContent = 'Pacman failed to start. Your browser may not be supported.';
+        document.body.textContent = 'Pacman failed to start. Check browser compatibility.';
     }
 })();
