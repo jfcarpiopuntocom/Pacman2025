@@ -1,4 +1,4 @@
-// pacman_improved.js
+// pacman_redesigned.js
 (() => {
     'use strict';
 
@@ -34,58 +34,45 @@
         })
     });
 
-    // Original Maze Layout (with potential formatting issues)
-    const MAZE = [
-        "############################",
-        "#............##............#",
-        "#.####.#####.##.#####.####.#",
-        "#o####.#####.##.#####.####o#",
-        "#.####.#####.##.#####.####.#",
-        "#..........................#",
-        "#.####.##.########.##.####.#",
-        "#.####.##.########.##.####.#",
-        "#......##....##....##......#",
-        "######.##### ## #####.######",
-        "#     .##### ## #####.     #",
-        "#     .##          ##.     #",
-        "#     .## ###@@### ##.     #",
-        "       ## #      # ##       ",
-        "       ## #      # ##       ",
-        "       ## #      # ##       ",
-        "#.....## ########## ##.....#",
-        "#.####.##          ##.####.#",
-        "#.####.##          ##.####.#",
-        "#......## ########## ##.....#",
-        "#.####.## ########## ##.####.#",
-        "#.####.##          ##.####.#",
-        "#o..##...          ...##..o#",
-        "#####.## ########## ##.#####",
-        "#.... ## ########## ## ....#",
-        "#.####.##############.####.#",
-        "#.####.##############.####.#",
-        "#..........................#",
-        "#.####.#####.##.#####.####.#",
-        "#.####.#####.##.#####.####.#",
-        "#............##............#",
-        "############################"
+    // Redesigned Maze Layout (31 rows x 28 columns)
+    const NEW_MAZE = [
+        "############################", // row 0
+        "#............##............#", // row 1
+        "#.####.#####.##.#####.####.#", // row 2
+        "#o####.#####.##.#####.####o#", // row 3
+        "#.####.#####.##.#####.####.#", // row 4
+        "#..........................#", // row 5
+        "#.####.##.########.##.####.#", // row 6
+        "#.####.##.########.##.####.#", // row 7
+        "#......##....##....##......#", // row 8
+        "######.##### ## #####.######", // row 9
+        "#     .##### ## #####.     #", // row 10
+        "#     .##          ##.     #", // row 11
+        "#     .## ###  ### ##.     #", // row 12
+        "#      ##    ##      ##    #", // row 13
+        "#      ##    ##      ##    #", // row 14
+        "#      ##    ##      ##    #", // row 15
+        "#.....## ########## ##.....#", // row 16
+        "#.####.##          ##.####.#", // row 17
+        "#.####.##          ##.####.#", // row 18
+        "#......## ########## ##.....#", // row 19
+        "#.####.## ########## ##.####.#", // row 20
+        "#.####.##          ##.####.#", // row 21
+        "#o..##...          ...##..o#", // row 22
+        "#####.## ########## ##.#####", // row 23
+        "#.... ## ########## ## ....#", // row 24
+        "#.####.##############.####.#", // row 25
+        "#.####.##############.####.#", // row 26
+        "#..........................#", // row 27
+        "#.####.#####.##.#####.####.#", // row 28
+        "#............##............#", // row 29
+        "############################"  // row 30
     ];
 
-    // Failsafe #2: Ensure each row is exactly COLS long, replace stray '@'
-    const fixedMaze = MAZE.map((row, idx) => {
-        let newRow = row.replace(/@/g, ' ');
-        if (newRow.length < CONFIG.COLS) {
-            newRow = newRow.padEnd(CONFIG.COLS, ' ');
-        } else if (newRow.length > CONFIG.COLS) {
-            newRow = newRow.substring(0, CONFIG.COLS);
-        }
-        return newRow;
-    });
-
-    // Failsafe #1: Canvas setup with check for existence and context
+    // Canvas Setup (with beautified UI)
     const canvas = document.createElement('canvas');
     if (!canvas.getContext) throw new Error('Canvas not supported');
     const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) throw new Error('Failed to get 2D context');
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
     canvas.style.border = '2px solid #FFF';
@@ -94,21 +81,14 @@
     document.body.appendChild(canvas);
     canvas.setAttribute('tabindex', '1');
     canvas.focus();
-
-    // UI Beautification: Gradient background for the document
     document.body.style.background = 'linear-gradient(45deg, #222, #555)';
     document.body.style.fontFamily = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
 
-    // Utility functions
+    // Utility Functions
     const Utils = {
-        // Failsafe #3: getTile ensures bounds check
         getTile(x, y) {
-            return {
-                x: Math.floor(x / CONFIG.TILE_SIZE),
-                y: Math.floor(y / CONFIG.TILE_SIZE)
-            };
+            return { x: Math.floor(x / CONFIG.TILE_SIZE), y: Math.floor(y / CONFIG.TILE_SIZE) };
         },
-        // Failsafe #10: Clamp delta to avoid huge jumps
         clamp(value, min, max) {
             return Math.max(min, Math.min(max, value));
         },
@@ -116,12 +96,12 @@
             return Math.hypot(x2 - x1, y2 - y1);
         },
         randomDirection() {
-            const dirs = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+            const dirs = [0, Math.PI/2, Math.PI, -Math.PI/2];
             return dirs[Math.floor(Math.random() * dirs.length)];
         }
     };
 
-    // Audio Module with failsafe #14 (resuming AudioContext on user gesture)
+    // Audio Module
     class AudioManager {
         constructor() {
             this.context = null;
@@ -133,22 +113,17 @@
         }
         play(frequency, duration = CONFIG.AUDIO.DURATION) {
             if (!this.context) return;
-            if (this.context.state === 'suspended') {
-                this.context.resume();
-            }
+            if (this.context.state === 'suspended') this.context.resume();
             const osc = this.context.createOscillator();
             osc.type = 'square';
             osc.frequency.value = frequency;
             osc.connect(this.context.destination);
             osc.start();
-            setTimeout(() => {
-                osc.stop();
-                osc.disconnect();
-            }, duration);
+            setTimeout(() => { osc.stop(); osc.disconnect(); }, duration);
         }
     }
 
-    // Entity Management with failsafe #18: Validate initial positions
+    // Entity Management
     class EntityManager {
         constructor() {
             this.pacman = {
@@ -180,8 +155,6 @@
             this.powerUps = [];
         }
         reset() {
-            // Failsafe #12: Validate lives and reset positions
-            if (this.pacman.lives < 0) this.pacman.lives = 0;
             Object.assign(this.pacman, {
                 x: 13.5 * CONFIG.TILE_SIZE,
                 y: 23 * CONFIG.TILE_SIZE,
@@ -203,7 +176,7 @@
         }
     }
 
-    // Main Game Logic with multiple failsafes
+    // Main Game Logic (integrates NEW_MAZE)
     class PacmanGame {
         constructor() {
             this.entities = new EntityManager();
@@ -214,13 +187,12 @@
             this.lastTime = performance.now();
             this.keysPressed = new Set();
             this.globalModeTimer = 0;
-            this.maze = fixedMaze;
+            this.maze = NEW_MAZE; // Use the redesigned layout here
             this.initMazeItems();
             this.bindControls();
             this.startGameLoop();
         }
 
-        // Failsafe #8: Initialize dots & power-ups with precise positioning
         initMazeItems() {
             for (let y = 0; y < this.maze.length; y++) {
                 for (let x = 0; x < this.maze[y].length; x++) {
@@ -240,7 +212,6 @@
             }
         }
 
-        // Failsafe #13: Robust key event binding with checks for valid key map
         bindControls() {
             const keyMap = {
                 'arrowleft': Math.PI,
@@ -252,17 +223,14 @@
                 'w': -Math.PI / 2,
                 's': Math.PI / 2
             };
-
             const keyDownHandler = (e) => {
                 e.preventDefault();
                 const key = e.key.toLowerCase();
-                if (keyMap[key] !== undefined) { // Failsafe #4: Only accept valid keys
+                if (keyMap[key] !== undefined) {
                     this.keysPressed.add(key);
-                    // Failsafe #10: Only update if safe to change direction (collision check later)
                     this.entities.pacman.nextDirection = keyMap[key];
                 }
             };
-
             const keyUpHandler = (e) => {
                 e.preventDefault();
                 const key = e.key.toLowerCase();
@@ -273,12 +241,10 @@
                     this.entities.pacman.nextDirection = null;
                 }
             };
-
             canvas.addEventListener('keydown', keyDownHandler);
             canvas.addEventListener('keyup', keyUpHandler);
             window.addEventListener('keydown', keyDownHandler);
             window.addEventListener('keyup', keyUpHandler);
-
             canvas.addEventListener('click', () => {
                 canvas.focus();
                 if (this.audio.context && this.audio.context.state === 'suspended') {
@@ -287,40 +253,33 @@
             });
         }
 
-        // Failsafe #5: Check collision with walls & tunnel connection
         canMove(x, y, radius) {
             let gridPos = Utils.getTile(x, y);
-            // Failsafe #3: Ensure grid indices are in bounds
             if (
                 gridPos.x < 0 || gridPos.x >= CONFIG.COLS ||
                 gridPos.y < 0 || gridPos.y >= CONFIG.ROWS
             ) {
-                // Failsafe #6: Tunnel connection for Pac-Man (wrap horizontally)
+                // Tunnel wrap-around horizontally
                 if (gridPos.x < 0) x = (CONFIG.COLS - 1) * CONFIG.TILE_SIZE + x % CONFIG.TILE_SIZE;
-                else if (gridPos.x >= CONFIG.COLS) x = (x % CONFIG.TILE_SIZE);
+                else if (gridPos.x >= CONFIG.COLS) x = x % CONFIG.TILE_SIZE;
                 gridPos = Utils.getTile(x, y);
             }
-            // Failsafe #15: Check for walls safely
-            if (this.maze[gridPos.y] && this.maze[gridPos.y][gridPos.x] !== '#') {
-                return true;
-            }
-            return false;
+            return (this.maze[gridPos.y] && this.maze[gridPos.y][gridPos.x] !== '#');
         }
 
-        // Provides possible directions; includes failsafe for safe moves
         getAvailableDirections(x, y, radius) {
             const directions = [
                 { angle: 0, dx: 1, dy: 0 },
                 { angle: Math.PI, dx: -1, dy: 0 },
-                { angle: -Math.PI / 2, dx: 0, dy: -1 },
-                { angle: Math.PI / 2, dx: 0, dy: 1 }
+                { angle: -Math.PI/2, dx: 0, dy: -1 },
+                { angle: Math.PI/2, dx: 0, dy: 1 }
             ];
             return directions.filter(dir =>
-                this.canMove(x + dir.dx * CONFIG.TILE_SIZE / 2, y + dir.dy * CONFIG.TILE_SIZE / 2, radius)
+                this.canMove(x + dir.dx * CONFIG.TILE_SIZE / 2,
+                             y + dir.dy * CONFIG.TILE_SIZE / 2, radius)
             );
         }
 
-        // Update ghost AI with failsafes for mode switching and tunnel connection
         updateGhostAI(ghost, pacTile, delta) {
             const ghostTile = Utils.getTile(ghost.x, ghost.y);
             const availableDirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
@@ -384,33 +343,24 @@
             ghost.direction = bestDir;
         }
 
-        // Main update function with multiple failsafes
         update(delta) {
-            delta = Utils.clamp(delta, 0, 100); // Failsafe #10: Clamp delta
+            delta = Utils.clamp(delta, 0, 100);
             const pac = this.entities.pacman;
             const speed = pac.speed * (delta / 16);
             const pacTile = Utils.getTile(pac.x, pac.y);
-
-            // Failsafe #4 & #10: Only change direction if it leads to safe movement
             if (pac.nextDirection !== null &&
                 this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
-                    pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
+                             pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
                 pac.direction = pac.nextDirection;
             }
-
             let newX = pac.x + Math.cos(pac.direction) * speed;
             let newY = pac.y + Math.sin(pac.direction) * speed;
-
-            // Failsafe #6: Tunnel connection for Pac-Man (wrap horizontally)
             if (newX < 0) newX = CONFIG.CANVAS_WIDTH + newX;
             if (newX > CONFIG.CANVAS_WIDTH) newX = newX - CONFIG.CANVAS_WIDTH;
-
             if (this.canMove(newX, newY, pac.radius)) {
                 pac.x = newX;
                 pac.y = newY;
             }
-
-            // Failsafe #9: Power mode timer update
             if (pac.powerMode) {
                 pac.powerTimer -= delta;
                 if (pac.powerTimer <= 0) {
@@ -418,8 +368,6 @@
                     this.entities.ghosts.forEach(g => g.frightened = false);
                 }
             }
-
-            // Failsafe #8: Check dot collisions with extra margin
             this.entities.dots = this.entities.dots.filter(dot => {
                 if (Utils.distance(pac.x, pac.y, dot.x, dot.y) <= pac.radius + 3) {
                     this.score += 10;
@@ -428,8 +376,6 @@
                 }
                 return true;
             });
-
-            // Failsafe #9: Check power-up collisions with extra margin
             this.entities.powerUps = this.entities.powerUps.filter(power => {
                 if (Utils.distance(pac.x, pac.y, power.x, power.y) <= pac.radius + 4) {
                     this.score += 50;
@@ -441,18 +387,13 @@
                 }
                 return true;
             });
-
-            // Update ghosts with failsafes for tunnel and collision resolution
             this.entities.ghosts.forEach(ghost => {
                 this.updateGhostAI(ghost, pacTile, delta);
                 const ghostSpeed = ghost.frightened ? CONFIG.SPEEDS.GHOST_FRIGHTENED : CONFIG.SPEEDS.GHOST;
                 let ghostX = ghost.x + Math.cos(ghost.direction) * ghostSpeed * (delta / 16);
                 let ghostY = ghost.y + Math.sin(ghost.direction) * ghostSpeed * (delta / 16);
-
-                // Failsafe #7: Tunnel connection for ghosts (horizontal wrap)
                 if (ghostX < 0) ghostX = CONFIG.CANVAS_WIDTH + ghostX;
                 if (ghostX > CONFIG.CANVAS_WIDTH) ghostX = ghostX - CONFIG.CANVAS_WIDTH;
-
                 if (this.canMove(ghostX, ghostY, 7)) {
                     ghost.x = ghostX;
                     ghost.y = ghostY;
@@ -460,8 +401,6 @@
                     const dirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
                     ghost.direction = dirs.length > 0 ? dirs[0].angle : ghost.direction;
                 }
-
-                // Failsafe #11: Ghost-Pacman collision detection with margin
                 if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
                     if (pac.powerMode) {
                         ghost.x = 13.5 * CONFIG.TILE_SIZE;
@@ -481,35 +420,27 @@
                     }
                 }
             });
-
-            // Failsafe: Win condition check
             if (this.entities.dots.length === 0 && this.entities.powerUps.length === 0) {
                 this.state = 'win';
             }
         }
 
-        // Render with UI beautification and failsafe #15: check context before drawing
         render(timestamp) {
-            if (!ctx) return;
-            // Beautify: draw gradient background on canvas
+            const pac = this.entities.pacman;
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
             gradient.addColorStop(0, '#000022');
             gradient.addColorStop(1, '#222255');
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Render maze walls
             ctx.fillStyle = CONFIG.COLORS.WALL;
             for (let y = 0; y < this.maze.length; y++) {
                 for (let x = 0; x < this.maze[y].length; x++) {
                     if (this.maze[y][x] === '#') {
                         ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE,
-                            CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                                     CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
                     }
                 }
             }
-
-            // Render dots and power-ups
             ctx.fillStyle = CONFIG.COLORS.TEXT;
             this.entities.dots.forEach(dot => {
                 ctx.beginPath();
@@ -521,20 +452,15 @@
                 ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
                 ctx.fill();
             });
-
-            // Render Pac-Man with animated mouth
-            const pac = this.entities.pacman;
             ctx.fillStyle = pac.powerMode ?
                 `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
             pac.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
             ctx.beginPath();
             ctx.arc(pac.x, pac.y, pac.radius,
-                pac.direction + pac.mouthAngle,
-                pac.direction + 2 * Math.PI - pac.mouthAngle);
+                    pac.direction + pac.mouthAngle,
+                    pac.direction + 2 * Math.PI - pac.mouthAngle);
             ctx.lineTo(pac.x, pac.y);
             ctx.fill();
-
-            // Render ghosts with simple eyes
             this.entities.ghosts.forEach(ghost => {
                 ctx.fillStyle = ghost.frightened ? CONFIG.COLORS.FRIGHTENED : ghost.color;
                 ctx.beginPath();
@@ -544,15 +470,12 @@
                     ctx.lineTo(ghost.x + i, ghost.y + (Math.abs(i) === 5 ? 7 : 5));
                 }
                 ctx.fill();
-                // Ghost eyes
                 ctx.fillStyle = CONFIG.COLORS.TEXT;
                 ctx.beginPath();
                 ctx.arc(ghost.x - 3, ghost.y - 2, 2, 0, Math.PI * 2);
                 ctx.arc(ghost.x + 3, ghost.y - 2, 2, 0, Math.PI * 2);
                 ctx.fill();
             });
-
-            // Render HUD with drop shadow for a modern look
             ctx.save();
             ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
             ctx.shadowBlur = 4;
@@ -562,15 +485,13 @@
             ctx.fillText(`High: ${this.highScore}`, 150, 20);
             ctx.fillText(`Lives: ${pac.lives}`, 360, 20);
             ctx.restore();
-
             if (this.state !== 'playing') {
                 ctx.font = '32px Segoe UI, Tahoma, sans-serif';
                 const msg = this.state === 'win' ? 'You Win!' : 'Game Over';
-                ctx.fillText(msg, canvas.width / 2 - 80, canvas.height / 2);
+                ctx.fillText(msg, canvas.width/2 - 80, canvas.height/2);
             }
         }
 
-        // Main game loop with failsafe #19: requestAnimationFrame fallback
         startGameLoop() {
             const loop = (timestamp) => {
                 const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
@@ -586,14 +507,13 @@
                     this.state = 'error';
                     ctx.fillStyle = CONFIG.COLORS.TEXT;
                     ctx.font = '20px Arial';
-                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
+                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height/2);
                 }
             };
             requestAnimationFrame(loop);
         }
     }
 
-    // Failsafe #20: Check requestAnimationFrame support
     if (!window.requestAnimationFrame) {
         window.requestAnimationFrame = (cb) => setTimeout(cb, 16);
     }
