@@ -9,7 +9,7 @@
             BACKGROUND: '#000000',
             WALL: '#0000FF',
             PACMAN: '#FFFF00',
-            GHOSTS: ['#FF4040', '#FF80FF', '#40FFFF', '#FF8000'], // Softer, cuter colors
+            GHOSTS: ['#FF4040', '#FF80FF', '#40FFFF', '#FF8000'],
             TEXT: '#FFFFFF',
             FRIGHTENED: '#8080FF',
             DEBUG: '#FF00FF'
@@ -20,14 +20,14 @@
         },
         POWER_DURATION: 5000,
         MODE_SWITCH_INTERVAL: 7000,
-        VERSION: 'v2.2',
+        VERSION: 'v2.3',
         MIDI: {
             CHANNEL: 0,
-            BACKGROUND_TEMPO: 120, // BPM for background music
-            DOT_NOTE: 60, // Middle C
-            POWER_NOTE: 64, // E
-            DEATH_NOTE: 55, // G#
-            MUSIC_NOTES: [60, 62, 64, 67, 69, 71, 74] // PAC-MAN theme notes (C, D, E, G, A, B, D)
+            BACKGROUND_TEMPO: 120,
+            DOT_NOTE: 60,
+            POWER_NOTE: 64,
+            DEATH_NOTE: 55,
+            MUSIC_NOTES: [60, 62, 64, 67, 69, 71, 74] // PAC-MAN theme (C, D, E, G, A, B, D)
         }
     });
 
@@ -80,7 +80,7 @@
         canvas.focus();
     } catch (e) {
         console.error('PAC-MAN Canvas initialization failed:', e);
-        document.body.textContent = 'PAC-MAN failed to start: Canvas not supported.';
+        displayError('Canvas not supported in this browser. Please use a modern browser like Firefox or Brave.');
         return;
     }
 
@@ -103,7 +103,18 @@
         }
     };
 
-    // MIDI Manager (Fallback if Web MIDI not supported)
+    // Error Display Function
+    function displayError(message) {
+        document.body.innerHTML = `
+            <div style="color: #FFFFFF; background: #000000; padding: 20px; font-family: Arial; text-align: center;">
+                <h1>PAC-MAN Error</h1>
+                <p>${message}</p>
+                <p>Check console for details or try a different browser (Firefox/Brave recommended).</p>
+            </div>
+        `;
+    }
+
+    // MIDI Manager
     class MidiManager {
         constructor() {
             this.synthesizer = null;
@@ -114,19 +125,23 @@
 
         async init() {
             try {
+                console.log('Attempting to initialize MIDI...');
                 if (!navigator.requestMIDIAccess) {
                     console.warn('Web MIDI API not supported. Using fallback audio.');
                     this.synthesizer = new FallbackSynthesizer();
                     return;
                 }
-                const midiAccess = await navigator.requestMIDIAccess();
+                const midiAccess = await Promise.race([
+                    navigator.requestMIDIAccess(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('MIDI access timed out')), 5000))
+                ]);
                 const outputs = midiAccess.outputs.values();
                 for (let output of outputs) {
                     this.synthesizer = output;
+                    console.log('MIDI output found:', output.name);
                     break;
                 }
                 if (!this.synthesizer) throw new Error('No MIDI output found');
-                console.log('MIDI initialized successfully');
             } catch (e) {
                 console.warn('MIDI initialization failed:', e);
                 this.synthesizer = new FallbackSynthesizer();
@@ -137,11 +152,9 @@
             if (!this.synthesizer) return;
             try {
                 if (this.synthesizer.send) {
-                    // MIDI note on
                     this.synthesizer.send([0x90 + CONFIG.MIDI.CHANNEL, note, velocity]); // Note on
                     setTimeout(() => this.synthesizer.send([0x80 + CONFIG.MIDI.CHANNEL, note, 0]), duration); // Note off
                 } else {
-                    // Fallback: Use Web Audio API
                     this.synthesizer.play(note, duration);
                 }
             } catch (e) {
@@ -169,7 +182,7 @@
         }
     }
 
-    // Fallback Synthesizer (Web Audio API for non-MIDI browsers)
+    // Fallback Synthesizer (Web Audio API)
     class FallbackSynthesizer {
         constructor() {
             this.context = window.AudioContext || window.webkitAudioContext ?
@@ -252,7 +265,7 @@
         }
     }
 
-    // Pacman Module (Cuter Design)
+    // Pacman Module
     class Pacman {
         constructor() {
             this.x = Utils.tileToPixel(13.5);
@@ -260,7 +273,7 @@
             this.speed = CONFIG.SPEEDS.PACMAN;
             this.direction = 0;
             this.nextDirection = 0;
-            this.radius = 8; // Slightly larger for cuter look
+            this.radius = 8;
             this.mouthAngle = 0;
             this.lives = 3;
             this.powerMode = false;
@@ -280,13 +293,21 @@
                 this.x = newX;
                 this.y = newY;
             } else {
-                // Ensure proper tunnel alignment
+                // Align to nearest valid position if stuck in tunnel
+                const tileX = Utils.pixelToTile(this.x);
+                const tileY = Utils.pixelToTile(this.y);
+                const centerX = Utils.tileToPixel(tileX) + CONFIG.TILE_SIZE / 2;
+                const centerY = Utils.tileToPixel(tileY) + CONFIG.TILE_SIZE / 2;
+                if (!maze.canMove(this.x, this.y, this.radius)) {
+                    this.x = centerX;
+                    this.y = centerY;
+                }
                 wrapped = maze.wrapAround(this.x, this.y);
                 this.x = wrapped.x;
                 this.y = wrapped.y;
             }
 
-            // Process direction queue (classic PAC-MAN style)
+            // Process direction queue
             if (this.directionQueue.length > 0) {
                 const nextDir = this.directionQueue[0];
                 let nextX = this.x + Math.cos(nextDir) * speed;
@@ -297,7 +318,7 @@
 
                 if (maze.canMove(nextX, nextY, this.radius)) {
                     this.direction = nextDir;
-                    this.directionQueue.shift(); // Remove processed direction
+                    this.directionQueue.shift();
                 }
             }
 
@@ -309,12 +330,11 @@
 
         render(ctx, timestamp) {
             ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
-            this.mouthAngle = Math.sin(timestamp * 0.01) * 0.7 + 0.3; // Smaller mouth for cuter look
+            this.mouthAngle = Math.sin(timestamp * 0.01) * 0.7 + 0.3;
             ctx.beginPath();
             ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
             ctx.lineTo(this.x, this.y);
             ctx.fill();
-            // Cute eyes (small black dot)
             ctx.fillStyle = '#000000';
             ctx.beginPath();
             const eyeOffset = 3;
@@ -333,7 +353,7 @@
         }
     }
 
-    // Ghost Module (Cuter Design)
+    // Ghost Module
     class Ghost {
         constructor(color, startX, startY) {
             this.x = startX;
@@ -343,7 +363,7 @@
             this.direction = Utils.randomDirection();
             this.mode = 'scatter';
             this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
-            this.wobble = 0; // For cute wobble animation
+            this.wobble = 0;
         }
 
         move(delta, pacman, maze) {
@@ -353,7 +373,7 @@
                 this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
             }
 
-            this.wobble += delta * 0.01; // Cute wobble effect
+            this.wobble += delta * 0.01;
 
             let targetAngle;
             if (pacman.powerMode) {
@@ -397,14 +417,13 @@
         render(ctx, pacman) {
             ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
             ctx.beginPath();
-            const wobble = Math.sin(this.wobble) * 2; // Cute wobble
-            ctx.arc(this.x, this.y + wobble, 8, 0, Math.PI); // Slightly larger, rounder body
+            const wobble = Math.sin(this.wobble) * 2;
+            ctx.arc(this.x, this.y + wobble, 8, 0, Math.PI);
             ctx.lineTo(this.x + 8, this.y + 7 + wobble);
             for (let i = 6; i >= -6; i -= 2) {
                 ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 6 ? 7 : 5) + wobble);
             }
             ctx.fill();
-            // Cute eyes (larger, sparkly)
             ctx.fillStyle = '#FFFFFF';
             ctx.beginPath();
             ctx.arc(this.x - 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
@@ -475,37 +494,53 @@
             };
 
             canvas.addEventListener('keydown', (e) => {
-                e.preventDefault();
-                const key = e.key.toLowerCase();
-                if (keyMap[key]) {
-                    this.keysPressed.add(key);
-                    this.pacman.directionQueue = []; // Clear queue for fresh input
-                    this.pacman.nextDirection = keyMap[key];
-                    console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
+                try {
+                    e.preventDefault();
+                    const key = e.key.toLowerCase();
+                    if (keyMap[key]) {
+                        this.keysPressed.add(key);
+                        this.pacman.directionQueue = []; // Clear queue for fresh input
+                        this.pacman.nextDirection = keyMap[key];
+                        console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
+                    }
+                } catch (e) {
+                    console.error('Keydown error:', e);
                 }
             });
 
             canvas.addEventListener('keyup', (e) => {
-                e.preventDefault();
-                const key = e.key.toLowerCase();
-                this.keysPressed.delete(key);
-                if (this.keysPressed.size > 0) {
-                    const lastKey = Array.from(this.keysPressed).pop();
-                    this.pacman.nextDirection = keyMap[lastKey];
-                    console.log(`Key released, new direction: ${this.pacman.nextDirection}`);
-                } else {
-                    this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
+                try {
+                    e.preventDefault();
+                    const key = e.key.toLowerCase();
+                    this.keysPressed.delete(key);
+                    if (this.keysPressed.size > 0) {
+                        const lastKey = Array.from(this.keysPressed).pop();
+                        this.pacman.nextDirection = keyMap[lastKey];
+                        console.log(`Key released, new direction: ${this.pacman.nextDirection}`);
+                    } else {
+                        this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
+                    }
+                } catch (e) {
+                    console.error('Keyup error:', e);
                 }
             });
 
             canvas.addEventListener('click', () => {
-                canvas.focus();
-                console.log('Canvas focused');
+                try {
+                    canvas.focus();
+                    console.log('Canvas focused');
+                } catch (e) {
+                    console.error('Click handler error:', e);
+                }
             });
 
             window.addEventListener('blur', () => {
-                canvas.focus();
-                console.log('Window blurred, refocusing canvas');
+                try {
+                    canvas.focus();
+                    console.log('Window blurred, refocusing canvas');
+                } catch (e) {
+                    console.error('Blur handler error:', e);
+                }
             });
         }
 
@@ -564,7 +599,7 @@
                         if (this.pacman.powerMode) {
                             ghost.reset();
                             this.score += 200;
-                            this.midi.playNote(CONFIG.MIDI.POWER_NOTE, 300); // Extended sound for eating ghost
+                            this.midi.playNote(CONFIG.MIDI.POWER_NOTE, 300);
                         } else {
                             this.pacman.lives--;
                             this.midi.playNote(CONFIG.MIDI.DEATH_NOTE, 300);
@@ -673,9 +708,10 @@
             window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
             console.warn('requestAnimationFrame not supported, using setTimeout fallback');
         }
-        new Game();
+        const game = new Game();
+        console.log('PAC-MAN v2.3 initialized successfully');
     } catch (e) {
         console.error('PAC-MAN initialization failed:', e);
-        document.body.textContent = 'PAC-MAN failed to start. Check browser compatibility or console for details.';
+        displayError(`PAC-MAN failed to start: ${e.message}. Check browser compatibility (Firefox/Brave recommended) or console for details.`);
     }
 })();
