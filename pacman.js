@@ -2,9 +2,10 @@
 (() => {
     // Configuration
     const CONFIG = Object.freeze({
+        VERSION: '2.0',
         TILE_SIZE: 16,
-        CANVAS_WIDTH: 448,
-        CANVAS_HEIGHT: 496,
+        CANVAS_WIDTH: 448,  // 28 * 16
+        CANVAS_HEIGHT: 496, // 31 * 16
         COLORS: {
             BACKGROUND: '#000000',
             WALL: '#0000FF',
@@ -18,29 +19,28 @@
             GHOST: 2
         },
         POWER_DURATION: 5000,
-        MODE_SWITCH_INTERVAL: 7000,
-        VERSION: 'v2.1'
+        MODE_SWITCH_INTERVAL: 7000
     });
 
-    // Classic PAC-MAN Maze Layout
+    // Classic Atari PAC-MAN Maze Layout
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
         "#.####.#####.##.#####.####.#",
-        "#o##.##.#####.##.#####.##o##",
-        "#.##.##.#####.##.#####.##.##",
-        "#.............##.............#",
-        "#.####.#####.##.#####.####.##",
-        "#.####.#####.##.#####.####.##",
-        "#......##....##....##......##",
-        "######.#####.##.#####.######",
-        "     #.#####.##.#####.#     ",
-        "     #.##          ##.#     ",
+        "#o####.#####.##.#####.####o#",
+        "#.####.#####.##.#####.####.#",
+        "#..........................#",
+        "#.####.##.########.##.####.#",
+        "#.####.##.########.##.####.#",
+        "#......##....##....##......#",
+        "######.##### ## #####.######",
+        "     #.##### ## #####.#     ",
+        "     #.##    @     ##.#     ",
         "     #.## ###==### ##.#     ",
         "######.## #      # ##.######",
         "      .   #      #   .      ",
         "######.## #      # ##.######",
-        "     #.## ########## ##.#     ",
+        "#.....## ########## ##.....#",
         "#.####.## ########## ##.####.#",
         "#.####.##            ##.####.#",
         "#......## ########## ##......#",
@@ -58,9 +58,8 @@
         "############################"
     ]);
 
-    // Canvas Setup
-    let canvas = null;
-    let ctx = null;
+    // Canvas Setup with Failsafe
+    let canvas, ctx;
     try {
         canvas = document.createElement('canvas');
         ctx = canvas.getContext('2d', { alpha: false });
@@ -71,8 +70,8 @@
         document.body.appendChild(canvas);
         canvas.focus();
     } catch (e) {
-        console.error('PAC-MAN Canvas initialization failed:', e);
-        document.body.textContent = 'PAC-MAN failed to start: Canvas not supported.';
+        console.error('Canvas initialization failed:', e);
+        document.body.textContent = 'PAC-MAN failed to initialize. Browser may not support canvas.';
         return;
     }
 
@@ -95,15 +94,16 @@
         }
     };
 
-    // Audio Manager
+    // Audio Manager with Failsafe
     class AudioManager {
         constructor() {
             this.context = null;
             try {
                 this.context = window.AudioContext || window.webkitAudioContext ?
                     new (window.AudioContext || window.webkitAudioContext)() : null;
+                if (!this.context) console.warn('AudioContext not supported in this browser');
             } catch (e) {
-                console.warn('PAC-MAN Web Audio API not supported:', e);
+                console.warn('Audio initialization failed:', e);
             }
         }
 
@@ -117,7 +117,7 @@
                 osc.start();
                 osc.stop(this.context.currentTime + duration / 1000);
             } catch (e) {
-                console.warn('PAC-MAN Audio playback failed:', e);
+                console.warn('Audio playback failed:', e);
             }
         }
     }
@@ -133,37 +133,47 @@
         }
 
         initItems() {
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '.') {
-                        this.dots.push({ x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE / 2, y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE / 2 });
-                    } else if (MAZE[y][x] === 'o') {
-                        this.powerUps.push({ x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE / 2, y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE / 2 });
+            try {
+                for (let y = 0; y < MAZE.length; y++) {
+                    for (let x = 0; x < MAZE[y].length; x++) {
+                        if (MAZE[y][x] === '.') {
+                            this.dots.push({ x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE / 2, y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE / 2 });
+                        } else if (MAZE[y][x] === 'o') {
+                            this.powerUps.push({ x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE / 2, y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE / 2 });
+                        }
                     }
                 }
+            } catch (e) {
+                console.error('Maze item initialization failed:', e);
+                throw e;
             }
         }
 
         render(ctx) {
-            ctx.fillStyle = CONFIG.COLORS.WALL;
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '#') {
-                        ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+            try {
+                ctx.fillStyle = CONFIG.COLORS.WALL;
+                for (let y = 0; y < MAZE.length; y++) {
+                    for (let x = 0; x < MAZE[y].length; x++) {
+                        if (MAZE[y][x] === '#') {
+                            ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                        }
                     }
                 }
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                this.dots.forEach(dot => {
+                    ctx.beginPath();
+                    ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                this.powerUps.forEach(power => {
+                    ctx.beginPath();
+                    ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            } catch (e) {
+                console.error('Maze rendering failed:', e);
+                throw e;
             }
-            ctx.fillStyle = CONFIG.COLORS.TEXT;
-            this.dots.forEach(dot => {
-                ctx.beginPath();
-                ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
-                ctx.fill();
-            });
-            this.powerUps.forEach(power => {
-                ctx.beginPath();
-                ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
-                ctx.fill();
-            });
         }
 
         canMove(x, y, radius) {
@@ -178,7 +188,8 @@
         wrapAround(x, y) {
             if (x < 0) x = CONFIG.CANVAS_WIDTH - CONFIG.TILE_SIZE;
             if (x >= CONFIG.CANVAS_WIDTH) x = 0;
-            if (y < 0 || y >= CONFIG.CANVAS_HEIGHT) y = Math.max(0, Math.min(y, CONFIG.CANVAS_HEIGHT - CONFIG.TILE_SIZE));
+            if (y < 0) y = 0;
+            if (y >= CONFIG.CANVAS_HEIGHT) y = CONFIG.CANVAS_HEIGHT - CONFIG.TILE_SIZE;
             return { x, y };
         }
     }
@@ -189,8 +200,8 @@
             this.x = Utils.tileToPixel(13.5);
             this.y = Utils.tileToPixel(23);
             this.speed = CONFIG.SPEEDS.PACMAN;
-            this.direction = 0; // Start facing right
-            this.nextDirection = 0; // Default direction
+            this.direction = 0;
+            this.nextDirection = 0;
             this.radius = 7;
             this.mouthAngle = 0;
             this.lives = 3;
@@ -199,43 +210,52 @@
         }
 
         move(delta, maze) {
-            const speed = this.speed * delta / 16;
-            let newX = this.x + Math.cos(this.direction) * speed;
-            let newY = this.y + Math.sin(this.direction) * speed;
-            let wrapped = maze.wrapAround(newX, newY);
-            newX = wrapped.x;
-            newY = wrapped.y;
+            try {
+                const speed = this.speed * delta / 16;
+                let newX = this.x + Math.cos(this.direction) * speed;
+                let newY = this.y + Math.sin(this.direction) * speed;
+                let wrapped = maze.wrapAround(newX, newY);
+                newX = wrapped.x;
+                newY = wrapped.y;
 
-            if (maze.canMove(newX, newY, this.radius)) {
-                this.x = newX;
-                this.y = newY;
-            }
+                if (maze.canMove(newX, newY, this.radius)) {
+                    this.x = newX;
+                    this.y = newY;
+                }
 
-            // Check and update direction based on nextDirection (classic PAC-MAN behavior)
-            let nextX = this.x + Math.cos(this.nextDirection) * speed;
-            let nextY = this.y + Math.sin(this.nextDirection) * speed;
-            wrapped = maze.wrapAround(nextX, nextY);
-            nextX = wrapped.x;
-            nextY = wrapped.y;
+                let nextX = this.x + Math.cos(this.nextDirection) * speed;
+                let nextY = this.y + Math.sin(this.nextDirection) * speed;
+                wrapped = maze.wrapAround(nextX, nextY);
+                nextX = wrapped.x;
+                nextY = wrapped.y;
 
-            if (maze.canMove(nextX, nextY, this.radius)) {
-                this.direction = this.nextDirection;
+                if (maze.canMove(nextX, nextY, this.radius)) {
+                    this.direction = this.nextDirection;
+                }
+            } catch (e) {
+                console.error('Pacman movement failed:', e);
+                throw e;
             }
         }
 
         render(ctx, timestamp) {
-            ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
-            this.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
-            ctx.lineTo(this.x, this.y);
-            ctx.fill();
+            try {
+                ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
+                this.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
+                ctx.lineTo(this.x, this.y);
+                ctx.fill();
+            } catch (e) {
+                console.error('Pacman rendering failed:', e);
+                throw e;
+            }
         }
 
         reset() {
             this.x = Utils.tileToPixel(13.5);
             this.y = Utils.tileToPixel(23);
-            this.direction = 0; // Reset to right
+            this.direction = 0;
             this.nextDirection = 0;
             this.powerMode = false;
             this.powerTimer = 0;
@@ -255,65 +275,75 @@
         }
 
         move(delta, pacman, maze) {
-            this.modeTimer -= delta;
-            if (this.modeTimer <= 0) {
-                this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
-                this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
-            }
+            try {
+                this.modeTimer -= delta;
+                if (this.modeTimer <= 0) {
+                    this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
+                    this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
+                }
 
-            let targetAngle;
-            if (pacman.powerMode) {
-                targetAngle = Utils.randomDirection(); // Flee
-            } else if (this.mode === 'chase') {
-                const dx = pacman.x - this.x;
-                const dy = pacman.y - this.y;
-                targetAngle = Math.atan2(dy, dx);
-            } else {
-                targetAngle = Utils.randomDirection(); // Scatter
-            }
+                let targetAngle;
+                if (pacman.powerMode) {
+                    targetAngle = Utils.randomDirection(); // Flee
+                } else if (this.mode === 'chase') {
+                    const dx = pacman.x - this.x;
+                    const dy = pacman.y - this.y;
+                    targetAngle = Math.atan2(dy, dx);
+                } else {
+                    targetAngle = Utils.randomDirection(); // Scatter
+                }
 
-            const speed = this.speed * delta / 16;
-            let newX = this.x + Math.cos(targetAngle) * speed;
-            let newY = this.y + Math.sin(targetAngle) * speed;
-            let wrapped = maze.wrapAround(newX, newY);
-            newX = wrapped.x;
-            newY = wrapped.y;
+                const speed = this.speed * delta / 16;
+                let newX = this.x + Math.cos(targetAngle) * speed;
+                let newY = this.y + Math.sin(targetAngle) * speed;
+                let wrapped = maze.wrapAround(newX, newY);
+                newX = wrapped.x;
+                newY = wrapped.y;
 
-            if (maze.canMove(newX, newY, 7)) {
-                this.x = newX;
-                this.y = newY;
-                this.direction = targetAngle;
-            } else {
-                for (let attempt = 0; attempt < 4; attempt++) {
-                    this.direction = Utils.randomDirection();
-                    newX = this.x + Math.cos(this.direction) * speed;
-                    newY = this.y + Math.sin(this.direction) * speed;
-                    wrapped = maze.wrapAround(newX, newY);
-                    newX = wrapped.x;
-                    newY = wrapped.y;
-                    if (maze.canMove(newX, newY, 7)) {
-                        this.x = newX;
-                        this.y = newY;
-                        break;
+                if (maze.canMove(newX, newY, 7)) {
+                    this.x = newX;
+                    this.y = newY;
+                    this.direction = targetAngle;
+                } else {
+                    for (let attempt = 0; attempt < 4; attempt++) {
+                        this.direction = Utils.randomDirection();
+                        newX = this.x + Math.cos(this.direction) * speed;
+                        newY = this.y + Math.sin(this.direction) * speed;
+                        wrapped = maze.wrapAround(newX, newY);
+                        newX = wrapped.x;
+                        newY = wrapped.y;
+                        if (maze.canMove(newX, newY, 7)) {
+                            this.x = newX;
+                            this.y = newY;
+                            break;
+                        }
                     }
                 }
+            } catch (e) {
+                console.error('Ghost movement failed:', e);
+                throw e;
             }
         }
 
         render(ctx, pacman) {
-            ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, 7, 0, Math.PI);
-            ctx.lineTo(this.x + 7, this.y + 7);
-            for (let i = 5; i >= -5; i -= 2) {
-                ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 5 ? 7 : 5));
+            try {
+                ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 7, 0, Math.PI);
+                ctx.lineTo(this.x + 7, this.y + 7);
+                for (let i = 5; i >= -5; i -= 2) {
+                    ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 5 ? 7 : 5));
+                }
+                ctx.fill();
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                ctx.beginPath();
+                ctx.arc(this.x - 3, this.y - 2, 2, 0, Math.PI * 2);
+                ctx.arc(this.x + 3, this.y - 2, 2, 0, Math.PI * 2);
+                ctx.fill();
+            } catch (e) {
+                console.error('Ghost rendering failed:', e);
+                throw e;
             }
-            ctx.fill();
-            ctx.fillStyle = CONFIG.COLORS.TEXT;
-            ctx.beginPath();
-            ctx.arc(this.x - 3, this.y - 2, 2, 0, Math.PI * 2);
-            ctx.arc(this.x + 3, this.y - 2, 2, 0, Math.PI * 2);
-            ctx.fill();
         }
 
         reset() {
@@ -333,121 +363,74 @@
             this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => new Ghost(color, Utils.tileToPixel(13 + (i % 2)), Utils.tileToPixel(11 + Math.floor(i / 2))));
             this.audio = new AudioManager();
             this.score = 0;
-            this.highScore = this.getHighScore() || 0;
+            this.highScore = parseInt(localStorage.getItem('pacmanHigh') || '0');
             this.state = 'playing';
             this.lastTime = 0;
             this.keysPressed = new Set();
-            this.directionQueue = []; // Queue for handling direction priorities
             this.bindControls();
             this.startGameLoop();
+            this.displayVersion();
         }
 
-        getHighScore() {
+        displayVersion() {
             try {
-                return parseInt(localStorage.getItem('pacmanHigh') || '0');
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                ctx.font = '12px Arial';
+                ctx.fillText(`PAC-MAN v${CONFIG.VERSION}`, 10, CONFIG.CANVAS_HEIGHT - 10);
             } catch (e) {
-                console.warn('PAC-MAN LocalStorage access failed:', e);
-                return 0;
-            }
-        }
-
-        setHighScore(score) {
-            try {
-                localStorage.setItem('pacmanHigh', score);
-            } catch (e) {
-                console.warn('PAC-MAN Failed to save high score:', e);
+                console.warn('Version display failed:', e);
             }
         }
 
         bindControls() {
-            const keyMap = {
-                'arrowleft': Math.PI,
-                'arrowright': 0,
-                'arrowup': -Math.PI / 2,
-                'arrowdown': Math.PI / 2,
-                'a': Math.PI,
-                'd': 0,
-                'w': -Math.PI / 2,
-                's': Math.PI / 2
-            };
+            try {
+                const keyMap = {
+                    'arrowleft': Math.PI,
+                    'arrowright': 0,
+                    'arrowup': -Math.PI / 2,
+                    'arrowdown': Math.PI / 2,
+                    'a': Math.PI,
+                    'd': 0,
+                    'w': -Math.PI / 2,
+                    's': Math.PI / 2
+                };
 
-            const handleKey = (e, isDown) => {
-                try {
+                canvas.addEventListener('keydown', (e) => {
                     e.preventDefault();
                     const key = e.key.toLowerCase();
                     if (keyMap[key]) {
-                        if (isDown) {
-                            this.keysPressed.add(key);
-                            this.directionQueue.push(keyMap[key]); // Add to queue
-                            this.pacman.nextDirection = keyMap[key]; // Immediate direction update
-                            console.log(`PAC-MAN Key ${isDown ? 'down' : 'up'}: ${key}, Direction: ${this.pacman.nextDirection}`);
-                        } else {
-                            this.keysPressed.delete(key);
-                            this.directionQueue = this.directionQueue.filter(dir => dir !== keyMap[key]);
-                            if (this.directionQueue.length > 0) {
-                                this.pacman.nextDirection = this.directionQueue[this.directionQueue.length - 1]; // Use last in queue
-                            } else {
-                                this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
-                            }
-                        }
+                        this.keysPressed.add(key);
+                        this.pacman.nextDirection = keyMap[key];
+                        console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
                     }
-                } catch (e) {
-                    console.error('PAC-MAN Control error:', e);
-                }
-            };
+                });
 
-            canvas.addEventListener('keydown', (e) => handleKey(e, true));
-            canvas.addEventListener('keyup', (e) => handleKey(e, false));
+                canvas.addEventListener('keyup', (e) => {
+                    e.preventDefault();
+                    const key = e.key.toLowerCase();
+                    this.keysPressed.delete(key);
+                    if (this.keysPressed.size > 0) {
+                        const lastKey = Array.from(this.keysPressed).pop();
+                        this.pacman.nextDirection = keyMap[lastKey];
+                        console.log(`Key released, new direction: ${this.pacman.nextDirection}`);
+                    } else {
+                        this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
+                    }
+                });
 
-            canvas.addEventListener('click', () => {
-                try {
+                canvas.addEventListener('click', () => {
                     canvas.focus();
-                    console.log('PAC-MAN Canvas focused');
-                } catch (e) {
-                    console.error('PAC-MAN Focus error:', e);
-                }
-            });
-
-            // Failsafe for focus loss
-            window.addEventListener('blur', () => {
-                try {
-                    canvas.focus();
-                    console.log('PAC-MAN Window regained focus');
-                } catch (e) {
-                    console.error('PAC-MAN Focus regain error:', e);
-                }
-            });
+                    console.log('Canvas focused');
+                });
+            } catch (e) {
+                console.error('Controls binding failed:', e);
+                throw e;
+            }
         }
 
         update(delta) {
             try {
-                // Update PAC-MAN movement
-                const speed = this.pacman.speed * delta / 16;
-                let newX = this.pacman.x + Math.cos(this.pacman.direction) * speed;
-                let newY = this.pacman.y + Math.sin(this.pacman.direction) * speed;
-                let wrapped = this.maze.wrapAround(newX, newY);
-                newX = wrapped.x;
-                newY = wrapped.y;
-
-                if (this.maze.canMove(newX, newY, this.pacman.radius)) {
-                    this.pacman.x = newX;
-                    this.pacman.y = newY;
-                }
-
-                // Check for direction change (classic PAC-MAN instant turn on valid path)
-                if (this.directionQueue.length > 0) {
-                    let nextX = this.pacman.x + Math.cos(this.pacman.nextDirection) * speed;
-                    let nextY = this.pacman.y + Math.sin(this.pacman.nextDirection) * speed;
-                    wrapped = this.maze.wrapAround(nextX, nextY);
-                    nextX = wrapped.x;
-                    nextY = wrapped.y;
-
-                    if (this.maze.canMove(nextX, nextY, this.pacman.radius)) {
-                        this.pacman.direction = this.pacman.nextDirection;
-                    }
-                }
-
-                // Update ghosts
+                this.pacman.move(delta, this.maze);
                 this.ghosts.forEach(ghost => ghost.move(delta, this.pacman, this.maze));
 
                 // Collect dots
@@ -491,8 +474,8 @@
                             if (this.pacman.lives <= 0) {
                                 this.state = 'gameover';
                                 if (this.score > this.highScore) {
-                                    this.setHighScore(this.score);
                                     this.highScore = this.score;
+                                    localStorage.setItem('pacmanHigh', this.highScore);
                                 }
                             }
                         }
@@ -503,8 +486,9 @@
                     this.state = 'win';
                 }
             } catch (e) {
-                console.error('PAC-MAN Update error:', e);
+                console.error('Game update failed:', e);
                 this.state = 'error';
+                throw e;
             }
         }
 
@@ -522,62 +506,56 @@
                 ctx.fillText(`Score: ${this.score}`, 10, 20);
                 ctx.fillText(`High: ${this.highScore}`, 150, 20);
                 ctx.fillText(`Lives: ${this.pacman.lives}`, 360, 20);
-                ctx.fillText(`PAC-MAN ${CONFIG.VERSION}`, CONFIG.CANVAS_WIDTH - 120, 20);
 
                 if (this.state !== 'playing') {
                     ctx.font = '32px Arial';
                     ctx.fillText(this.state === 'win' ? 'You Win!' : 'Game Over', canvas.width / 2 - 80, canvas.height / 2);
                 }
+
+                // Version Number
+                this.displayVersion();
             } catch (e) {
-                console.error('PAC-MAN Render error:', e);
+                console.error('Game rendering failed:', e);
                 this.state = 'error';
-                ctx.fillStyle = CONFIG.COLORS.TEXT;
-                ctx.font = '20px Arial';
-                ctx.fillText('PAC-MAN Rendering failed. Refresh to retry.', 50, canvas.height / 2);
+                throw e;
             }
         }
 
         startGameLoop() {
-            const loop = (timestamp) => {
-                try {
-                    if (!this.lastTime) this.lastTime = timestamp;
-                    const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
-                    this.lastTime = timestamp;
+            try {
+                let lastTime = 0;
+                const loop = (timestamp) => {
+                    if (!lastTime) lastTime = timestamp;
+                    const delta = Utils.clamp(timestamp - lastTime, 0, 100);
+                    lastTime = timestamp;
 
-                    if (this.state === 'playing') {
+                    if (this.state === 'playing' || this.state === 'error') {
                         this.update(delta);
                     }
                     this.render(timestamp);
                     requestAnimationFrame(loop);
-                } catch (error) {
-                    console.error('PAC-MAN Game loop error:', error);
-                    this.state = 'error';
-                    ctx.fillStyle = CONFIG.COLORS.TEXT;
-                    ctx.font = '20px Arial';
-                    ctx.fillText('PAC-MAN Crashed! Refresh to retry.', 50, canvas.height / 2);
-                }
-            };
-            try {
+                };
                 requestAnimationFrame(loop);
             } catch (e) {
-                console.error('PAC-MAN Animation frame request failed:', e);
+                console.error('Game loop failed:', e);
                 this.state = 'error';
                 ctx.fillStyle = CONFIG.COLORS.TEXT;
                 ctx.font = '20px Arial';
-                ctx.fillText('PAC-MAN Animation not supported. Refresh to retry.', 50, canvas.height / 2);
+                ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
             }
         }
     }
 
-    // Bootstrap
+    // Bootstrap with Additional Failsafes
     try {
-        if (!canvas || !ctx) throw new Error('PAC-MAN Canvas initialization failed');
+        if (!canvas || !ctx) throw new Error('Canvas setup failed');
         if (!window.requestAnimationFrame) {
             window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
+            console.warn('requestAnimationFrame not supported, using setTimeout fallback');
         }
         new Game();
     } catch (e) {
-        console.error('PAC-MAN Initialization failed:', e);
-        document.body.textContent = 'PAC-MAN failed to start. Check browser compatibility or console for details.';
+        console.error('Initialization failed:', e);
+        document.body.textContent = 'PAC-MAN v2.0 failed to start. Check browser compatibility or console for details.';
     }
 })();
