@@ -32,8 +32,8 @@
         })
     });
 
-    // Your Maze Layout Converted (28x31)
-    const MAZE = Object.freeze([
+    // Original Maze Layout (may have formatting issues)
+    const MAZE = [
         "############################",
         "#............##............#",
         "#.####.#####.##.#####.####.#",
@@ -66,7 +66,19 @@
         "#.####.#####.##.#####.####.#",
         "#............##............#",
         "############################"
-    ]);
+    ];
+
+    // Fix Maze Layout: ensure each row is exactly 28 characters and replace '@' with space
+    const fixedMaze = MAZE.map(row => {
+        let newRow = row.replace(/@/g, ' ');
+        const targetLength = CONFIG.CANVAS_WIDTH / CONFIG.TILE_SIZE;
+        if (newRow.length < targetLength) {
+            newRow = newRow.padEnd(targetLength, ' ');
+        } else if (newRow.length > targetLength) {
+            newRow = newRow.substring(0, targetLength);
+        }
+        return newRow;
+    });
 
     // Canvas Setup
     const canvas = document.createElement('canvas');
@@ -74,7 +86,7 @@
     const ctx = canvas.getContext('2d', { alpha: false });
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
-    canvas.tabIndex = 0;
+    canvas.setAttribute('tabindex', '1'); // Ensure canvas is focusable
     document.body.appendChild(canvas);
     canvas.focus();
 
@@ -111,6 +123,9 @@
 
         play(frequency, duration = CONFIG.AUDIO.DURATION) {
             if (!this.context) return;
+            if (this.context.state === 'suspended') {
+                this.context.resume();
+            }
             const osc = this.context.createOscillator();
             osc.type = 'square';
             osc.frequency.value = frequency;
@@ -127,7 +142,7 @@
     class EntityManager {
         constructor() {
             this.pacman = {
-                x: 13.5 * CONFIG.TILE_SIZE, // Index 490 (23 * 28 + 13)
+                x: 13.5 * CONFIG.TILE_SIZE,
                 y: 23 * CONFIG.TILE_SIZE,
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
@@ -140,10 +155,10 @@
             };
 
             this.ghosts = [
-                { color: CONFIG.COLORS.GHOSTS[0], x: 12 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE }, // Blinky: 348
-                { color: CONFIG.COLORS.GHOSTS[1], x: 14 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE }, // Pinky: 376
-                { color: CONFIG.COLORS.GHOSTS[2], x: 13 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE }, // Inky: 351
-                { color: CONFIG.COLORS.GHOSTS[3], x: 15 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE }  // Clyde: 379
+                { color: CONFIG.COLORS.GHOSTS[0], x: 12 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE },
+                { color: CONFIG.COLORS.GHOSTS[1], x: 14 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE },
+                { color: CONFIG.COLORS.GHOSTS[2], x: 13 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE },
+                { color: CONFIG.COLORS.GHOSTS[3], x: 15 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE }
             ].map(g => ({
                 ...g,
                 speed: CONFIG.SPEEDS.GHOST,
@@ -191,20 +206,21 @@
             this.lastTime = performance.now();
             this.keysPressed = new Set();
             this.globalModeTimer = 0;
+            this.maze = fixedMaze; // Use the fixed maze layout
             this.initMazeItems();
             this.bindControls();
             this.startGameLoop();
         }
 
         initMazeItems() {
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '.') {
+            for (let y = 0; y < this.maze.length; y++) {
+                for (let x = 0; x < this.maze[y].length; x++) {
+                    if (this.maze[y][x] === '.') {
                         this.entities.dots.push({
                             x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
                             y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
                         });
-                    } else if (MAZE[y][x] === 'o') {
+                    } else if (this.maze[y][x] === 'o') {
                         this.entities.powerUps.push({
                             x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
                             y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
@@ -226,16 +242,16 @@
                 's': Math.PI/2
             });
 
-            canvas.addEventListener('keydown', (e) => {
+            const keyDownHandler = (e) => {
                 e.preventDefault();
                 const key = e.key.toLowerCase();
-                if (keyMap[key]) {
+                if (keyMap[key] !== undefined) {
                     this.keysPressed.add(key);
                     this.entities.pacman.nextDirection = keyMap[key];
                 }
-            });
+            };
 
-            canvas.addEventListener('keyup', (e) => {
+            const keyUpHandler = (e) => {
                 e.preventDefault();
                 const key = e.key.toLowerCase();
                 this.keysPressed.delete(key);
@@ -244,9 +260,21 @@
                 } else {
                     this.entities.pacman.nextDirection = null;
                 }
-            });
+            };
 
-            canvas.addEventListener('click', () => canvas.focus());
+            canvas.addEventListener('keydown', keyDownHandler);
+            canvas.addEventListener('keyup', keyUpHandler);
+            // Also bind to window for better compatibility
+            window.addEventListener('keydown', keyDownHandler);
+            window.addEventListener('keyup', keyUpHandler);
+
+            canvas.addEventListener('click', () => {
+                canvas.focus();
+                // Resume audio on user gesture
+                if (this.audio.context && this.audio.context.state === 'suspended') {
+                    this.audio.context.resume();
+                }
+            });
         }
 
         canMove(x, y, radius) {
@@ -254,9 +282,9 @@
             const gridY1 = Math.floor((y + radius) / CONFIG.TILE_SIZE);
             const gridX2 = Math.floor((x - radius) / CONFIG.TILE_SIZE);
             const gridY2 = Math.floor((y - radius) / CONFIG.TILE_SIZE);
-            return (gridX1 >= 0 && gridX1 < 28 && gridY1 >= 0 && gridY1 < 31 &&
-                    gridX2 >= 0 && gridX2 < 28 && gridY2 >= 0 && gridY2 < 31 &&
-                    MAZE[gridY1][gridX1] !== '#' && MAZE[gridY2][gridX2] !== '#');
+            return (gridX1 >= 0 && gridX1 < this.maze[0].length && gridY1 >= 0 && gridY1 < this.maze.length &&
+                    gridX2 >= 0 && gridX2 < this.maze[0].length && gridY2 >= 0 && gridY2 < this.maze.length &&
+                    this.maze[gridY1][gridX1] !== '#' && this.maze[gridY2][gridX2] !== '#');
         }
 
         getAvailableDirections(x, y, radius) {
@@ -432,13 +460,13 @@
             ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Render maze
+            // Render maze walls
             ctx.fillStyle = CONFIG.COLORS.WALL;
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '#') {
+            for (let y = 0; y < this.maze.length; y++) {
+                for (let x = 0; x < this.maze[y].length; x++) {
+                    if (this.maze[y][x] === '#') {
                         ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE,
-                                   CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                                     CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
                     }
                 }
             }
