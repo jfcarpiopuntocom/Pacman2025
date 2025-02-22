@@ -20,7 +20,7 @@
         },
         POWER_DURATION: 5000,
         MODE_SWITCH_INTERVAL: 7000,
-        VERSION: 'v2.3',
+        VERSION: 'v2.4',
         MIDI: {
             CHANNEL: 0,
             BACKGROUND_TEMPO: 120,
@@ -80,7 +80,7 @@
         canvas.focus();
     } catch (e) {
         console.error('PAC-MAN Canvas initialization failed:', e);
-        displayError('Canvas not supported in this browser. Please use a modern browser like Firefox or Brave.');
+        displayError('Canvas not supported', 'Ensure you’re using a modern browser (Firefox, Brave, or Chrome). <a href="https://www.mozilla.org/firefox/" target="_blank">Get Firefox</a> or <a href="https://brave.com/" target="_blank">Get Brave</a>.');
         return;
     }
 
@@ -104,12 +104,13 @@
     };
 
     // Error Display Function
-    function displayError(message) {
+    function displayError(message, details = '') {
         document.body.innerHTML = `
-            <div style="color: #FFFFFF; background: #000000; padding: 20px; font-family: Arial; text-align: center;">
+            <div style="color: ${CONFIG.COLORS.TEXT}; background: ${CONFIG.COLORS.BACKGROUND}; padding: 20px; font-family: Arial; text-align: center; max-width: 600px; margin: 0 auto;">
                 <h1>PAC-MAN Error</h1>
                 <p>${message}</p>
-                <p>Check console for details or try a different browser (Firefox/Brave recommended).</p>
+                <p>${details}</p>
+                <p>Check the console (F12) for more details or try refreshing the page.</p>
             </div>
         `;
     }
@@ -124,15 +125,15 @@
         }
 
         async init() {
+            console.log('Attempting to initialize MIDI...');
             try {
-                console.log('Attempting to initialize MIDI...');
                 if (!navigator.requestMIDIAccess) {
                     console.warn('Web MIDI API not supported. Using fallback audio.');
                     this.synthesizer = new FallbackSynthesizer();
                     return;
                 }
                 const midiAccess = await Promise.race([
-                    navigator.requestMIDIAccess(),
+                    navigator.requestMIDIAccess({ sysex: false }), // No SysEx for broader compatibility
                     new Promise((_, reject) => setTimeout(() => reject(new Error('MIDI access timed out')), 5000))
                 ]);
                 const outputs = midiAccess.outputs.values();
@@ -142,8 +143,14 @@
                     break;
                 }
                 if (!this.synthesizer) throw new Error('No MIDI output found');
+                // Request MIDI permission if needed (some browsers prompt)
+                if (!midiAccess.outputs.size) {
+                    alert('Please enable MIDI devices in your browser settings or connect a MIDI synthesizer.');
+                    throw new Error('MIDI permission or device not available');
+                }
             } catch (e) {
                 console.warn('MIDI initialization failed:', e);
+                alert(`MIDI failed to initialize: ${e.message}. The game will use fallback audio.`);
                 this.synthesizer = new FallbackSynthesizer();
             }
         }
@@ -227,25 +234,29 @@
         }
 
         render(ctx) {
-            ctx.fillStyle = CONFIG.COLORS.WALL;
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '#') {
-                        ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+            try {
+                ctx.fillStyle = CONFIG.COLORS.WALL;
+                for (let y = 0; y < MAZE.length; y++) {
+                    for (let x = 0; x < MAZE[y].length; x++) {
+                        if (MAZE[y][x] === '#') {
+                            ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                        }
                     }
                 }
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                this.dots.forEach(dot => {
+                    ctx.beginPath();
+                    ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                this.powerUps.forEach(power => {
+                    ctx.beginPath();
+                    ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            } catch (e) {
+                console.error('Maze render failed:', e);
             }
-            ctx.fillStyle = CONFIG.COLORS.TEXT;
-            this.dots.forEach(dot => {
-                ctx.beginPath();
-                ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
-                ctx.fill();
-            });
-            this.powerUps.forEach(power => {
-                ctx.beginPath();
-                ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
-                ctx.fill();
-            });
         }
 
         canMove(x, y, radius) {
@@ -282,74 +293,86 @@
         }
 
         move(delta, maze) {
-            const speed = this.speed * delta / 16;
-            let newX = this.x + Math.cos(this.direction) * speed;
-            let newY = this.y + Math.sin(this.direction) * speed;
-            let wrapped = maze.wrapAround(newX, newY);
-            newX = wrapped.x;
-            newY = wrapped.y;
+            try {
+                const speed = this.speed * delta / 16;
+                let newX = this.x + Math.cos(this.direction) * speed;
+                let newY = this.y + Math.sin(this.direction) * speed;
+                let wrapped = maze.wrapAround(newX, newY);
+                newX = wrapped.x;
+                newY = wrapped.y;
 
-            if (maze.canMove(newX, newY, this.radius)) {
-                this.x = newX;
-                this.y = newY;
-            } else {
-                // Align to nearest valid position if stuck in tunnel
-                const tileX = Utils.pixelToTile(this.x);
-                const tileY = Utils.pixelToTile(this.y);
-                const centerX = Utils.tileToPixel(tileX) + CONFIG.TILE_SIZE / 2;
-                const centerY = Utils.tileToPixel(tileY) + CONFIG.TILE_SIZE / 2;
-                if (!maze.canMove(this.x, this.y, this.radius)) {
-                    this.x = centerX;
-                    this.y = centerY;
+                if (maze.canMove(newX, newY, this.radius)) {
+                    this.x = newX;
+                    this.y = newY;
+                } else {
+                    // Align to nearest valid position if stuck
+                    const tileX = Utils.pixelToTile(this.x);
+                    const tileY = Utils.pixelToTile(this.y);
+                    const centerX = Utils.tileToPixel(tileX) + CONFIG.TILE_SIZE / 2;
+                    const centerY = Utils.tileToPixel(tileY) + CONFIG.TILE_SIZE / 2;
+                    if (!maze.canMove(this.x, this.y, this.radius)) {
+                        this.x = centerX;
+                        this.y = centerY;
+                    }
+                    wrapped = maze.wrapAround(this.x, this.y);
+                    this.x = wrapped.x;
+                    this.y = wrapped.y;
                 }
-                wrapped = maze.wrapAround(this.x, this.y);
-                this.x = wrapped.x;
-                this.y = wrapped.y;
-            }
 
-            // Process direction queue
-            if (this.directionQueue.length > 0) {
-                const nextDir = this.directionQueue[0];
-                let nextX = this.x + Math.cos(nextDir) * speed;
-                let nextY = this.y + Math.sin(nextDir) * speed;
-                wrapped = maze.wrapAround(nextX, nextY);
-                nextX = wrapped.x;
-                nextY = wrapped.y;
+                // Process direction queue
+                if (this.directionQueue.length > 0) {
+                    const nextDir = this.directionQueue[0];
+                    let nextX = this.x + Math.cos(nextDir) * speed;
+                    let nextY = this.y + Math.sin(nextDir) * speed;
+                    wrapped = maze.wrapAround(nextX, nextY);
+                    nextX = wrapped.x;
+                    nextY = wrapped.y;
 
-                if (maze.canMove(nextX, nextY, this.radius)) {
-                    this.direction = nextDir;
-                    this.directionQueue.shift();
+                    if (maze.canMove(nextX, nextY, this.radius)) {
+                        this.direction = nextDir;
+                        this.directionQueue.shift();
+                    }
                 }
-            }
 
-            // Update nextDirection if valid
-            if (this.nextDirection !== this.direction && this.directionQueue.length < 2) {
-                this.directionQueue.push(this.nextDirection);
+                // Update nextDirection if valid
+                if (this.nextDirection !== this.direction && this.directionQueue.length < 2) {
+                    this.directionQueue.push(this.nextDirection);
+                }
+            } catch (e) {
+                console.error('Pacman move failed:', e);
             }
         }
 
         render(ctx, timestamp) {
-            ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
-            this.mouthAngle = Math.sin(timestamp * 0.01) * 0.7 + 0.3;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
-            ctx.lineTo(this.x, this.y);
-            ctx.fill();
-            ctx.fillStyle = '#000000';
-            ctx.beginPath();
-            const eyeOffset = 3;
-            ctx.arc(this.x + Math.cos(this.direction) * eyeOffset, this.y + Math.sin(this.direction) * eyeOffset, 2, 0, Math.PI * 2);
-            ctx.fill();
+            try {
+                ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
+                this.mouthAngle = Math.sin(timestamp * 0.01) * 0.7 + 0.3;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
+                ctx.lineTo(this.x, this.y);
+                ctx.fill();
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                const eyeOffset = 3;
+                ctx.arc(this.x + Math.cos(this.direction) * eyeOffset, this.y + Math.sin(this.direction) * eyeOffset, 2, 0, Math.PI * 2);
+                ctx.fill();
+            } catch (e) {
+                console.error('Pacman render failed:', e);
+            }
         }
 
         reset() {
-            this.x = Utils.tileToPixel(13.5);
-            this.y = Utils.tileToPixel(23);
-            this.direction = 0;
-            this.nextDirection = 0;
-            this.directionQueue = [];
-            this.powerMode = false;
-            this.powerTimer = 0;
+            try {
+                this.x = Utils.tileToPixel(13.5);
+                this.y = Utils.tileToPixel(23);
+                this.direction = 0;
+                this.nextDirection = 0;
+                this.directionQueue = [];
+                this.powerMode = false;
+                this.powerTimer = 0;
+            } catch (e) {
+                console.error('Pacman reset failed:', e);
+            }
         }
     }
 
@@ -367,82 +390,94 @@
         }
 
         move(delta, pacman, maze) {
-            this.modeTimer -= delta;
-            if (this.modeTimer <= 0) {
-                this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
-                this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
-            }
+            try {
+                this.modeTimer -= delta;
+                if (this.modeTimer <= 0) {
+                    this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
+                    this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
+                }
 
-            this.wobble += delta * 0.01;
+                this.wobble += delta * 0.01;
 
-            let targetAngle;
-            if (pacman.powerMode) {
-                targetAngle = Utils.randomDirection(); // Flee
-            } else if (this.mode === 'chase') {
-                const dx = pacman.x - this.x;
-                const dy = pacman.y - this.y;
-                targetAngle = Math.atan2(dy, dx);
-            } else {
-                targetAngle = Utils.randomDirection(); // Scatter
-            }
+                let targetAngle;
+                if (pacman.powerMode) {
+                    targetAngle = Utils.randomDirection(); // Flee
+                } else if (this.mode === 'chase') {
+                    const dx = pacman.x - this.x;
+                    const dy = pacman.y - this.y;
+                    targetAngle = Math.atan2(dy, dx);
+                } else {
+                    targetAngle = Utils.randomDirection(); // Scatter
+                }
 
-            const speed = this.speed * delta / 16;
-            let newX = this.x + Math.cos(targetAngle) * speed;
-            let newY = this.y + Math.sin(targetAngle) * speed;
-            let wrapped = maze.wrapAround(newX, newY);
-            newX = wrapped.x;
-            newY = wrapped.y;
+                const speed = this.speed * delta / 16;
+                let newX = this.x + Math.cos(targetAngle) * speed;
+                let newY = this.y + Math.sin(targetAngle) * speed;
+                let wrapped = maze.wrapAround(newX, newY);
+                newX = wrapped.x;
+                newY = wrapped.y;
 
-            if (maze.canMove(newX, newY, 7)) {
-                this.x = newX;
-                this.y = newY;
-                this.direction = targetAngle;
-            } else {
-                for (let attempt = 0; attempt < 4; attempt++) {
-                    this.direction = Utils.randomDirection();
-                    newX = this.x + Math.cos(this.direction) * speed;
-                    newY = this.y + Math.sin(this.direction) * speed;
-                    wrapped = maze.wrapAround(newX, newY);
-                    newX = wrapped.x;
-                    newY = wrapped.y;
-                    if (maze.canMove(newX, newY, 7)) {
-                        this.x = newX;
-                        this.y = newY;
-                        break;
+                if (maze.canMove(newX, newY, 7)) {
+                    this.x = newX;
+                    this.y = newY;
+                    this.direction = targetAngle;
+                } else {
+                    for (let attempt = 0; attempt < 4; attempt++) {
+                        this.direction = Utils.randomDirection();
+                        newX = this.x + Math.cos(this.direction) * speed;
+                        newY = this.y + Math.sin(this.direction) * speed;
+                        wrapped = maze.wrapAround(newX, newY);
+                        newX = wrapped.x;
+                        newY = wrapped.y;
+                        if (maze.canMove(newX, newY, 7)) {
+                            this.x = newX;
+                            this.y = newY;
+                            break;
+                        }
                     }
                 }
+            } catch (e) {
+                console.error('Ghost move failed:', e);
             }
         }
 
         render(ctx, pacman) {
-            ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
-            ctx.beginPath();
-            const wobble = Math.sin(this.wobble) * 2;
-            ctx.arc(this.x, this.y + wobble, 8, 0, Math.PI);
-            ctx.lineTo(this.x + 8, this.y + 7 + wobble);
-            for (let i = 6; i >= -6; i -= 2) {
-                ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 6 ? 7 : 5) + wobble);
+            try {
+                ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
+                ctx.beginPath();
+                const wobble = Math.sin(this.wobble) * 2;
+                ctx.arc(this.x, this.y + wobble, 8, 0, Math.PI);
+                ctx.lineTo(this.x + 8, this.y + 7 + wobble);
+                for (let i = 6; i >= -6; i -= 2) {
+                    ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 6 ? 7 : 5) + wobble);
+                }
+                ctx.fill();
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(this.x - 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
+                ctx.arc(this.x + 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(this.x - 3, this.y - 2 + wobble, 1, 0, Math.PI * 2);
+                ctx.arc(this.x + 3, this.y - 2 + wobble, 1, 0, Math.PI * 2);
+                ctx.fill();
+            } catch (e) {
+                console.error('Ghost render failed:', e);
             }
-            ctx.fill();
-            ctx.fillStyle = '#FFFFFF';
-            ctx.beginPath();
-            ctx.arc(this.x - 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
-            ctx.arc(this.x + 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#000000';
-            ctx.beginPath();
-            ctx.arc(this.x - 3, this.y - 2 + wobble, 1, 0, Math.PI * 2);
-            ctx.arc(this.x + 3, this.y - 2 + wobble, 1, 0, Math.PI * 2);
-            ctx.fill();
         }
 
         reset() {
-            this.x = Utils.tileToPixel(13.5);
-            this.y = Utils.tileToPixel(11);
-            this.direction = Utils.randomDirection();
-            this.mode = 'scatter';
-            this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
-            this.wobble = 0;
+            try {
+                this.x = Utils.tileToPixel(13.5);
+                this.y = Utils.tileToPixel(11);
+                this.direction = Utils.randomDirection();
+                this.mode = 'scatter';
+                this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
+                this.wobble = 0;
+            } catch (e) {
+                console.error('Ghost reset failed:', e);
+            }
         }
     }
 
@@ -482,66 +517,71 @@
         }
 
         bindControls() {
-            const keyMap = {
-                'arrowleft': Math.PI,
-                'arrowright': 0,
-                'arrowup': -Math.PI / 2,
-                'arrowdown': Math.PI / 2,
-                'a': Math.PI,
-                'd': 0,
-                'w': -Math.PI / 2,
-                's': Math.PI / 2
-            };
+            try {
+                const keyMap = {
+                    'arrowleft': Math.PI,
+                    'arrowright': 0,
+                    'arrowup': -Math.PI / 2,
+                    'arrowdown': Math.PI / 2,
+                    'a': Math.PI,
+                    'd': 0,
+                    'w': -Math.PI / 2,
+                    's': Math.PI / 2
+                };
 
-            canvas.addEventListener('keydown', (e) => {
-                try {
-                    e.preventDefault();
-                    const key = e.key.toLowerCase();
-                    if (keyMap[key]) {
-                        this.keysPressed.add(key);
-                        this.pacman.directionQueue = []; // Clear queue for fresh input
-                        this.pacman.nextDirection = keyMap[key];
-                        console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
+                canvas.addEventListener('keydown', (e) => {
+                    try {
+                        e.preventDefault();
+                        const key = e.key.toLowerCase();
+                        if (keyMap[key]) {
+                            this.keysPressed.add(key);
+                            this.pacman.directionQueue = []; // Clear queue for fresh input
+                            this.pacman.nextDirection = keyMap[key];
+                            console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
+                        }
+                    } catch (e) {
+                        console.error('Keydown error:', e);
                     }
-                } catch (e) {
-                    console.error('Keydown error:', e);
-                }
-            });
+                });
 
-            canvas.addEventListener('keyup', (e) => {
-                try {
-                    e.preventDefault();
-                    const key = e.key.toLowerCase();
-                    this.keysPressed.delete(key);
-                    if (this.keysPressed.size > 0) {
-                        const lastKey = Array.from(this.keysPressed).pop();
-                        this.pacman.nextDirection = keyMap[lastKey];
-                        console.log(`Key released, new direction: ${this.pacman.nextDirection}`);
-                    } else {
-                        this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
+                canvas.addEventListener('keyup', (e) => {
+                    try {
+                        e.preventDefault();
+                        const key = e.key.toLowerCase();
+                        this.keysPressed.delete(key);
+                        if (this.keysPressed.size > 0) {
+                            const lastKey = Array.from(this.keysPressed).pop();
+                            this.pacman.nextDirection = keyMap[lastKey];
+                            console.log(`Key released, new direction: ${this.pacman.nextDirection}`);
+                        } else {
+                            this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
+                        }
+                    } catch (e) {
+                        console.error('Keyup error:', e);
                     }
-                } catch (e) {
-                    console.error('Keyup error:', e);
-                }
-            });
+                });
 
-            canvas.addEventListener('click', () => {
-                try {
-                    canvas.focus();
-                    console.log('Canvas focused');
-                } catch (e) {
-                    console.error('Click handler error:', e);
-                }
-            });
+                canvas.addEventListener('click', () => {
+                    try {
+                        canvas.focus();
+                        console.log('Canvas focused');
+                    } catch (e) {
+                        console.error('Click handler error:', e);
+                    }
+                });
 
-            window.addEventListener('blur', () => {
-                try {
-                    canvas.focus();
-                    console.log('Window blurred, refocusing canvas');
-                } catch (e) {
-                    console.error('Blur handler error:', e);
-                }
-            });
+                window.addEventListener('blur', () => {
+                    try {
+                        canvas.focus();
+                        console.log('Window blurred, refocusing canvas');
+                    } catch (e) {
+                        console.error('Blur handler error:', e);
+                    }
+                });
+            } catch (e) {
+                console.error('Controls binding failed:', e);
+                this.state = 'error';
+            }
         }
 
         startBackgroundMusic() {
@@ -682,7 +722,7 @@
                     this.render(timestamp);
                     requestAnimationFrame(loop);
                 } catch (error) {
-                    console.error('Game loop error:', error);
+                    console.error('Game loop error:', e);
                     this.state = 'error';
                     ctx.fillStyle = CONFIG.COLORS.TEXT;
                     ctx.font = '20px Arial';
@@ -703,15 +743,29 @@
 
     // Bootstrap
     try {
+        console.log('Starting PAC-MAN v2.4 initialization...');
         if (!canvas || !ctx) throw new Error('Canvas initialization failed');
         if (!window.requestAnimationFrame) {
             window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
             console.warn('requestAnimationFrame not supported, using setTimeout fallback');
         }
-        const game = new Game();
-        console.log('PAC-MAN v2.3 initialized successfully');
+        // Check Web Audio API (for fallback audio)
+        if (!(window.AudioContext || window.webkitAudioContext)) {
+            console.warn('Web Audio API not supported. Audio will be disabled.');
+        }
+        new Game();
+        console.log('PAC-MAN v2.4 initialized successfully');
     } catch (e) {
         console.error('PAC-MAN initialization failed:', e);
-        displayError(`PAC-MAN failed to start: ${e.message}. Check browser compatibility (Firefox/Brave recommended) or console for details.`);
+        displayError(`PAC-MAN failed to start: ${e.message}`, `
+            <p>Troubleshooting:</p>
+            <ul style="list-style: none; padding: 0;">
+                <li>1. Use a modern browser (Firefox, Brave, or Chrome).</li>
+                <li>2. Ensure Web MIDI is enabled (may require granting permission or installing a MIDI synthesizer).</li>
+                <li>3. Serve files via a local server (not file:// protocol).</li>
+                <li>4. Check console (F12) for detailed errors.</li>
+            </ul>
+            <p><a href="https://www.mozilla.org/firefox/" target="_blank">Get Firefox</a> or <a href="https://brave.com/" target="_blank">Get Brave</a>.</p>
+        `);
     }
 })();
