@@ -21,10 +21,12 @@
         },
         SPEEDS: {
             PACMAN: 2,
-            GHOST: 1.8
+            GHOST: 1.8,
+            GHOST_FRIGHTENED: 0.9
         }
     });
 
+    // Atari-accurate maze with proper tunnels
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
@@ -36,18 +38,18 @@
         "#.####.##.########.##.####.#",
         "#......##....##....##......#",
         "######.##### ## #####.######",
-        "     #.##### ## #####.#     ",
-        "     #.##    @     ##.#     ",
-        "     #.## ###==### ##.#     ",
-        "######.## #      # ##.######",
-        "      .   #      #   .      ",
-        "######.## #      # ##.######",
+        "#     .##### ## #####.     #",
+        "#     .##          ##.     #",
+        "#     .## ###==### ##.     #",
+        "       ## #      # ##       ",
+        "       ## #      # ##       ",
+        "       ## #      # ##       ",
         "#.....## ########## ##.....#",
+        "#.####.##          ##.####.#",
+        "#.####.##          ##.####.#",
+        "#......## ########## ##.....#",
         "#.####.## ########## ##.####.#",
-        "#.####.##            ##.####.#",
-        "#......## ########## ##......#",
-        "#.####.## ########## ##.####.#",
-        "#.####.##            ##.####.#",
+        "#.####.##          ##.####.#",
         "#o..##...          ...##..o#",
         "#####.## ########## ##.#####",
         "#.... ## ########## ## ....#",
@@ -79,6 +81,11 @@
         },
         randomDirection() {
             return [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random() * 4)];
+        },
+        getTile(x, y) {
+            const tileX = Math.floor(x / CONFIG.TILE_SIZE);
+            const tileY = Math.floor(y / CONFIG.TILE_SIZE);
+            return { x: tileX, y: tileY };
         }
     };
 
@@ -108,7 +115,7 @@
                 y: 23 * CONFIG.TILE_SIZE,
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
-                nextDirection: null, // Null until input received
+                nextDirection: null,
                 radius: 7,
                 mouthAngle: 0,
                 lives: 3,
@@ -122,7 +129,9 @@
                 color,
                 speed: CONFIG.SPEEDS.GHOST,
                 direction: Utils.randomDirection(),
-                frightened: false
+                frightened: false,
+                targetTile: null,
+                mode: 'scatter' // Start in scatter mode like original
             }));
 
             this.dots = [];
@@ -141,6 +150,7 @@
                 g.y = (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE;
                 g.direction = Utils.randomDirection();
                 g.frightened = false;
+                g.mode = 'scatter';
             });
         }
     }
@@ -155,6 +165,7 @@
             this.state = 'playing';
             this.lastTime = performance.now();
             this.keysPressed = new Set();
+            this.modeTimer = 0;
             this.initMazeItems();
             this.bindControls();
             this.startGameLoop();
@@ -225,9 +236,98 @@
                     MAZE[gridY1][gridX1] !== '#' && MAZE[gridY2][gridX2] !== '#');
         }
 
+        getAvailableDirections(x, y, radius) {
+            const directions = [
+                { angle: 0, dx: 1, dy: 0 },        // Right
+                { angle: Math.PI, dx: -1, dy: 0 }, // Left
+                { angle: -Math.PI/2, dx: 0, dy: -1 }, // Up
+                { angle: Math.PI/2, dx: 0, dy: 1 }  // Down
+            ];
+            return directions.filter(dir => 
+                this.canMove(x + dir.dx * CONFIG.TILE_SIZE/2, 
+                           y + dir.dy * CONFIG.TILE_SIZE/2, radius));
+        }
+
+        updateGhostAI(ghost, pacTile, delta) {
+            const ghostTile = Utils.getTile(ghost.x, ghost.y);
+            const availableDirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
+
+            if (availableDirs.length === 0) return;
+
+            // Mode switching like original Pacman (scatter/chase)
+            this.modeTimer += delta;
+            if (this.modeTimer > 20000) { // 20 seconds
+                ghost.mode = ghost.mode === 'scatter' ? 'chase' : 'scatter';
+                this.modeTimer = 0;
+            }
+
+            // Target selection
+            let targetX, targetY;
+            if (ghost.frightened) {
+                targetX = Math.random() * CONFIG.CANVAS_WIDTH;
+                targetY = Math.random() * CONFIG.CANVAS_HEIGHT;
+            } else if (ghost.mode === 'scatter') {
+                // Scatter targets for each ghost (Atari-style corners)
+                const scatterTargets = [
+                    { x: 25, y: 0 },  // Blinky: Top-right
+                    { x: 2, y: 0 },   // Pinky: Top-left
+                    { x: 25, y: 30 }, // Inky: Bottom-right
+                    { x: 2, y: 30 }   // Clyde: Bottom-left
+                ];
+                const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
+                targetX = scatterTargets[idx].x * CONFIG.TILE_SIZE;
+                targetY = scatterTargets[idx].y * CONFIG.TILE_SIZE;
+            } else { // Chase mode
+                const pacX = pacTile.x * CONFIG.TILE_SIZE;
+                const pacY = pacTile.y * CONFIG.TILE_SIZE;
+                const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
+                switch (idx) {
+                    case 0: // Blinky: Direct chase
+                        targetX = pacX;
+                        targetY = pacY;
+                        break;
+                    case 1: // Pinky: Ambush (4 tiles ahead)
+                        targetX = pacX + Math.cos(this.entities.pacman.direction) * 4 * CONFIG.TILE_SIZE;
+                        targetY = pacY + Math.sin(this.entities.pacman.direction) * 4 * CONFIG.TILE_SIZE;
+                        break;
+                    case 2: // Inky: Complex (uses Blinky's position)
+                        const blinky = this.entities.ghosts[0];
+                        targetX = pacX + (pacX - blinky.x);
+                        targetY = pacY + (pacY - blinky.y);
+                        break;
+                    case 3: // Clyde: Chase if far, scatter if close
+                        const dist = Utils.distance(ghost.x, ghost.y, pacX, pacY);
+                        if (dist > 8 * CONFIG.TILE_SIZE) {
+                            targetX = pacX;
+                            targetY = pacY;
+                        } else {
+                            targetX = 2 * CONFIG.TILE_SIZE;
+                            targetY = 30 * CONFIG.TILE_SIZE;
+                        }
+                        break;
+                }
+            }
+
+            // Choose best direction
+            let bestDir = ghost.direction;
+            let minDist = Infinity;
+            availableDirs.forEach(dir => {
+                const newX = ghost.x + dir.dx * CONFIG.TILE_SIZE;
+                const newY = ghost.y + dir.dy * CONFIG.TILE_SIZE;
+                const dist = Utils.distance(newX, newY, targetX, targetY);
+                if (dist < minDist) {
+                    minDist = dist;
+                    bestDir = dir.angle;
+                }
+            });
+
+            ghost.direction = bestDir;
+        }
+
         update(delta) {
             const pac = this.entities.pacman;
-            const speed = pac.speed * (delta / 16); // Normalized speed
+            const speed = pac.speed * (delta / 16);
+            const pacTile = Utils.getTile(pac.x, pac.y);
 
             // Pacman movement
             if (pac.nextDirection !== null && 
@@ -254,7 +354,7 @@
 
             // Collectibles
             this.entities.dots = this.entities.dots.filter(dot => {
-                if (Utils.distance(pac.x, pac.y, dot.x, dot.y) < pac.radius) {
+                if (Utils.distance(pac.x, pac.y, dot.x, dot.y) < pac.radius + 2) { // Increased hitbox
                     this.score += 10;
                     this.audio.play(CONFIG.AUDIO.DOT);
                     return false;
@@ -263,7 +363,7 @@
             });
 
             this.entities.powerUps = this.entities.powerUps.filter(power => {
-                if (Utils.distance(pac.x, pac.y, power.x, power.y) < pac.radius) {
+                if (Utils.distance(pac.x, pac.y, power.x, power.y) < pac.radius + 4) {
                     this.score += 50;
                     pac.powerMode = true;
                     pac.powerTimer = 5000;
@@ -276,22 +376,15 @@
 
             // Ghost movement
             this.entities.ghosts.forEach(ghost => {
-                const dx = pac.x - ghost.x;
-                const dy = pac.y - ghost.y;
-                const targetAngle = ghost.frightened ? 
-                    Utils.randomDirection() : Math.atan2(dy, dx);
-                ghost.direction += (targetAngle - ghost.direction) * 0.1; // Smooth turning
-
+                this.updateGhostAI(ghost, pacTile, delta);
                 const ghostSpeed = ghost.frightened ? 
-                    ghost.speed * 0.5 : ghost.speed;
+                    CONFIG.SPEEDS.GHOST_FRIGHTENED : CONFIG.SPEEDS.GHOST;
                 const ghostX = ghost.x + Math.cos(ghost.direction) * ghostSpeed * (delta / 16);
                 const ghostY = ghost.y + Math.sin(ghost.direction) * ghostSpeed * (delta / 16);
                 
                 if (this.canMove(ghostX, ghostY, 7)) {
                     ghost.x = ghostX;
                     ghost.y = ghostY;
-                } else {
-                    ghost.direction = Utils.randomDirection(); // Change direction at walls
                 }
 
                 if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
