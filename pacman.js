@@ -9,10 +9,9 @@
             BACKGROUND: '#000000',
             WALL: '#0000FF',
             PACMAN: '#FFFF00',
-            GHOSTS: ['#FF4040', '#FF80FF', '#40FFFF', '#FF8000'],
+            GHOSTS: ['#FF0000', '#FFB8FF', '#00FFFF', '#FFB852'],
             TEXT: '#FFFFFF',
-            FRIGHTENED: '#8080FF',
-            DEBUG: '#FF00FF'
+            FRIGHTENED: '#000080'
         },
         SPEEDS: {
             PACMAN: 2.5,
@@ -20,15 +19,7 @@
         },
         POWER_DURATION: 5000,
         MODE_SWITCH_INTERVAL: 7000,
-        VERSION: 'v2.5',
-        MIDI: {
-            CHANNEL: 0,
-            BACKGROUND_TEMPO: 120,
-            DOT_NOTE: 60,
-            POWER_NOTE: 64,
-            DEATH_NOTE: 55,
-            MUSIC_NOTES: [60, 62, 64, 67, 69, 71, 74] // PAC-MAN theme (C, D, E, G, A, B, D)
-        }
+        VERSION: 'v2.6'
     });
 
     const MAZE = Object.freeze([
@@ -115,7 +106,7 @@
         `;
     }
 
-    // Audio Manager (Web Audio API Fallback)
+    // Audio Manager (Web Audio API)
     class AudioManager {
         constructor() {
             this.context = null;
@@ -126,7 +117,7 @@
                 console.log('AudioManager initialized successfully');
             } catch (e) {
                 console.warn('Web Audio API initialization failed:', e);
-                this.context = null;
+                this.context = null; // Disable audio if unsupported
             }
         }
 
@@ -134,87 +125,13 @@
             if (!this.context) return;
             try {
                 const osc = this.context.createOscillator();
-                osc.type = 'sine'; // Softer, MIDI-like sound
+                osc.type = 'square'; // Classic square wave for PAC-MAN sounds
                 osc.frequency.value = frequency;
                 osc.connect(this.context.destination);
                 osc.start();
                 osc.stop(this.context.currentTime + duration / 1000);
             } catch (e) {
                 console.warn('Audio playback failed:', e);
-            }
-        }
-    }
-
-    // MIDI Manager
-    class MidiManager {
-        constructor() {
-            this.synthesizer = null;
-            this.backgroundInterval = null;
-            this.isPlaying = false;
-            this.init();
-        }
-
-        async init() {
-            console.log('Attempting to initialize MIDI...');
-            try {
-                if (!navigator.requestMIDIAccess) {
-                    console.warn('Web MIDI API not supported. Using fallback audio.');
-                    this.synthesizer = new AudioManager(); // Use AudioManager as fallback
-                    return;
-                }
-                const midiAccess = await Promise.race([
-                    navigator.requestMIDIAccess({ sysex: false }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('MIDI access timed out')), 5000))
-                ]);
-                const outputs = midiAccess.outputs.values();
-                for (let output of outputs) {
-                    this.synthesizer = output;
-                    console.log('MIDI output found:', output.name);
-                    break;
-                }
-                if (!this.synthesizer) throw new Error('No MIDI output found');
-                // Request MIDI permission if needed
-                if (!midiAccess.outputs.size) {
-                    alert('Please enable MIDI devices in your browser settings or connect a MIDI synthesizer.');
-                    throw new Error('MIDI permission or device not available');
-                }
-            } catch (e) {
-                console.warn('MIDI initialization failed:', e);
-                alert(`MIDI failed to initialize: ${e.message}. The game will use fallback audio.`);
-                this.synthesizer = new AudioManager(); // Fallback to AudioManager
-            }
-        }
-
-        playNote(note, duration = 200, velocity = 127) {
-            if (!this.synthesizer) return;
-            try {
-                if (this.synthesizer.send) {
-                    this.synthesizer.send([0x90 + CONFIG.MIDI.CHANNEL, note, velocity]); // Note on
-                    setTimeout(() => this.synthesizer.send([0x80 + CONFIG.MIDI.CHANNEL, note, 0]), duration); // Note off
-                } else {
-                    this.synthesizer.play(note, duration); // Fallback to Web Audio
-                }
-            } catch (e) {
-                console.warn('MIDI note playback failed:', e);
-            }
-        }
-
-        playBackgroundMusic() {
-            if (this.isPlaying || !this.synthesizer) return;
-            this.isPlaying = true;
-            let noteIndex = 0;
-            const tempo = CONFIG.MIDI.BACKGROUND_TEMPO / 60 * 1000; // Convert BPM to ms per beat
-            this.backgroundInterval = setInterval(() => {
-                const note = CONFIG.MIDI.MUSIC_NOTES[noteIndex % CONFIG.MIDI.MUSIC_NOTES.length];
-                this.playNote(note, tempo * 0.5, 64); // Softer volume for background
-                noteIndex++;
-            }, tempo * 0.5);
-        }
-
-        stopBackgroundMusic() {
-            if (this.backgroundInterval) {
-                clearInterval(this.backgroundInterval);
-                this.isPlaying = false;
             }
         }
     }
@@ -287,17 +204,16 @@
     // Pacman Module
     class Pacman {
         constructor() {
-            this.x =Utils.tileToPixel(13.5);
+            this.x = Utils.tileToPixel(13.5);
             this.y = Utils.tileToPixel(23);
             this.speed = CONFIG.SPEEDS.PACMAN;
             this.direction = 0;
             this.nextDirection = 0;
-            this.radius = 8;
+            this.radius = 7;
             this.mouthAngle = 0;
             this.lives = 3;
             this.powerMode = false;
             this.powerTimer = 0;
-            this.directionQueue = [];
         }
 
         move(delta, maze) {
@@ -312,39 +228,16 @@
                 if (maze.canMove(newX, newY, this.radius)) {
                     this.x = newX;
                     this.y = newY;
-                } else {
-                    // Align to nearest valid position if stuck
-                    const tileX = Utils.pixelToTile(this.x);
-                    const tileY = Utils.pixelToTile(this.y);
-                    const centerX = Utils.tileToPixel(tileX) + CONFIG.TILE_SIZE / 2;
-                    const centerY = Utils.tileToPixel(tileY) + CONFIG.TILE_SIZE / 2;
-                    if (!maze.canMove(this.x, this.y, this.radius)) {
-                        this.x = centerX;
-                        this.y = centerY;
-                    }
-                    wrapped = maze.wrapAround(this.x, this.y);
-                    this.x = wrapped.x;
-                    this.y = wrapped.y;
                 }
 
-                // Process direction queue
-                if (this.directionQueue.length > 0) {
-                    const nextDir = this.directionQueue[0];
-                    let nextX = this.x + Math.cos(nextDir) * speed;
-                    let nextY = this.y + Math.sin(nextDir) * speed;
-                    wrapped = maze.wrapAround(nextX, nextY);
-                    nextX = wrapped.x;
-                    nextY = wrapped.y;
+                let nextX = this.x + Math.cos(this.nextDirection) * speed;
+                let nextY = this.y + Math.sin(this.nextDirection) * speed;
+                wrapped = maze.wrapAround(nextX, nextY);
+                nextX = wrapped.x;
+                nextY = wrapped.y;
 
-                    if (maze.canMove(nextX, nextY, this.radius)) {
-                        this.direction = nextDir;
-                        this.directionQueue.shift();
-                    }
-                }
-
-                // Update nextDirection if valid
-                if (this.nextDirection !== this.direction && this.directionQueue.length < 2) {
-                    this.directionQueue.push(this.nextDirection);
+                if (maze.canMove(nextX, nextY, this.radius)) {
+                    this.direction = this.nextDirection;
                 }
             } catch (e) {
                 console.error('Pacman move failed:', e);
@@ -354,15 +247,10 @@
         render(ctx, timestamp) {
             try {
                 ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
-                this.mouthAngle = Math.sin(timestamp * 0.01) * 0.7 + 0.3;
+                this.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
                 ctx.lineTo(this.x, this.y);
-                ctx.fill();
-                ctx.fillStyle = '#000000';
-                ctx.beginPath();
-                const eyeOffset = 3;
-                ctx.arc(this.x + Math.cos(this.direction) * eyeOffset, this.y + Math.sin(this.direction) * eyeOffset, 2, 0, Math.PI * 2);
                 ctx.fill();
             } catch (e) {
                 console.error('Pacman render failed:', e);
@@ -375,7 +263,6 @@
                 this.y = Utils.tileToPixel(23);
                 this.direction = 0;
                 this.nextDirection = 0;
-                this.directionQueue = [];
                 this.powerMode = false;
                 this.powerTimer = 0;
             } catch (e) {
@@ -394,7 +281,6 @@
             this.direction = Utils.randomDirection();
             this.mode = 'scatter';
             this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
-            this.wobble = 0;
         }
 
         move(delta, pacman, maze) {
@@ -404,8 +290,6 @@
                     this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
                     this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
                 }
-
-                this.wobble += delta * 0.01;
 
                 let targetAngle;
                 if (pacman.powerMode) {
@@ -453,22 +337,16 @@
             try {
                 ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
                 ctx.beginPath();
-                const wobble = Math.sin(this.wobble) * 2;
-                ctx.arc(this.x, this.y + wobble, 8, 0, Math.PI);
-                ctx.lineTo(this.x + 8, this.y + 7 + wobble);
-                for (let i = 6; i >= -6; i -= 2) {
-                    ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 6 ? 7 : 5) + wobble);
+                ctx.arc(this.x, this.y, 7, 0, Math.PI);
+                ctx.lineTo(this.x + 7, this.y + 7);
+                for (let i = 5; i >= -5; i -= 2) {
+                    ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 5 ? 7 : 5));
                 }
                 ctx.fill();
-                ctx.fillStyle = '#FFFFFF';
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
                 ctx.beginPath();
-                ctx.arc(this.x - 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
-                ctx.arc(this.x + 3, this.y - 2 + wobble, 3, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = '#000000';
-                ctx.beginPath();
-                ctx.arc(this.x - 3, this.y - 2 + wobble, 1, 0, Math.PI * 2);
-                ctx.arc(this.x + 3, this.y - 2 + wobble, 1, 0, Math.PI * 2);
+                ctx.arc(this.x - 3, this.y - 2, 2, 0, Math.PI * 2);
+                ctx.arc(this.x + 3, this.y - 2, 2, 0, Math.PI * 2);
                 ctx.fill();
             } catch (e) {
                 console.error('Ghost render failed:', e);
@@ -482,7 +360,6 @@
                 this.direction = Utils.randomDirection();
                 this.mode = 'scatter';
                 this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
-                this.wobble = 0;
             } catch (e) {
                 console.error('Ghost reset failed:', e);
             }
@@ -495,15 +372,13 @@
             this.maze = new Maze();
             this.pacman = new Pacman();
             this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => new Ghost(color, Utils.tileToPixel(13 + (i % 2)), Utils.tileToPixel(11 + Math.floor(i / 2))));
-            this.audio = new AudioManager(); // Reintroduced AudioManager
-            this.midi = new MidiManager();
+            this.audio = new AudioManager();
             this.score = 0;
             this.highScore = this.getHighScore() || 0;
             this.state = 'playing';
             this.lastTime = 0;
             this.keysPressed = new Set();
             this.bindControls();
-            this.startBackgroundMusic();
             this.startGameLoop();
         }
 
@@ -543,12 +418,12 @@
                         const key = e.key.toLowerCase();
                         if (keyMap[key]) {
                             this.keysPressed.add(key);
-                            this.pacman.directionQueue = []; // Clear queue for fresh input
                             this.pacman.nextDirection = keyMap[key];
                             console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
                         }
                     } catch (e) {
                         console.error('Keydown error:', e);
+                        this.pacman.nextDirection = this.pacman.direction; // Fallback to maintain movement
                     }
                 });
 
@@ -592,22 +467,6 @@
             }
         }
 
-        startBackgroundMusic() {
-            try {
-                this.midi.playBackgroundMusic();
-            } catch (e) {
-                console.warn('Background music failed to start:', e);
-            }
-        }
-
-        stopBackgroundMusic() {
-            try {
-                this.midi.stopBackgroundMusic();
-            } catch (e) {
-                console.warn('Failed to stop background music:', e);
-            }
-        }
-
         update(delta) {
             try {
                 this.pacman.move(delta, this.maze);
@@ -617,10 +476,8 @@
                 this.maze.dots = this.maze.dots.filter(dot => {
                     if (Utils.distance(this.pacman.x, this.pacman.y, dot.x, dot.y) < this.pacman.radius) {
                         this.score += 10;
-                        if (this.midi.synthesizer) {
-                            this.midi.playNote(CONFIG.MIDI.DOT_NOTE);
-                        } else if (this.audio.context) {
-                            this.audio.play(CONFIG.MIDI.DOT_NOTE * 8.1758); // Convert MIDI note to Hz (440 * 2^((note-69)/12))
+                        if (this.audio.context) {
+                            this.audio.play(220); // Dot sound
                         }
                         return false;
                     }
@@ -633,10 +490,8 @@
                         this.score += 50;
                         this.pacman.powerMode = true;
                         this.pacman.powerTimer = CONFIG.POWER_DURATION;
-                        if (this.midi.synthesizer) {
-                            this.midi.playNote(CONFIG.MIDI.POWER_NOTE);
-                        } else if (this.audio.context) {
-                            this.audio.play(CONFIG.MIDI.POWER_NOTE * 8.1758); // Convert MIDI note to Hz
+                        if (this.audio.context) {
+                            this.audio.play(440); // Power pellet sound
                         }
                         return false;
                     }
@@ -655,17 +510,10 @@
                         if (this.pacman.powerMode) {
                             ghost.reset();
                             this.score += 200;
-                            if (this.midi.synthesizer) {
-                                this.midi.playNote(CONFIG.MIDI.POWER_NOTE, 300);
-                            } else if (this.audio.context) {
-                                this.audio.play(CONFIG.MIDI.POWER_NOTE * 8.1758, 300);
-                            }
                         } else {
                             this.pacman.lives--;
-                            if (this.midi.synthesizer) {
-                                this.midi.playNote(CONFIG.MIDI.DEATH_NOTE, 300);
-                            } else if (this.audio.context) {
-                                this.audio.play(CONFIG.MIDI.DEATH_NOTE * 8.1758, 300);
+                            if (this.audio.context) {
+                                this.audio.play(110, 300); // Death sound
                             }
                             this.pacman.reset();
                             if (this.pacman.lives <= 0) {
@@ -674,7 +522,6 @@
                                     this.setHighScore(this.score);
                                     this.highScore = this.score;
                                 }
-                                this.stopBackgroundMusic();
                             }
                         }
                     }
@@ -682,7 +529,6 @@
 
                 if (this.maze.dots.length === 0 && this.maze.powerUps.length === 0) {
                     this.state = 'win';
-                    this.stopBackgroundMusic();
                 }
             } catch (e) {
                 console.error('Update error:', e);
@@ -698,20 +544,13 @@
                 this.pacman.render(ctx, timestamp);
                 this.ghosts.forEach(ghost => ghost.render(ctx, this.pacman));
 
-                // HUD and UI
+                // HUD
                 ctx.fillStyle = CONFIG.COLORS.TEXT;
                 ctx.font = '16px Arial';
                 ctx.fillText(`Score: ${this.score}`, 10, 20);
                 ctx.fillText(`High: ${this.highScore}`, 150, 20);
                 ctx.fillText(`Lives: ${this.pacman.lives}`, 360, 20);
                 ctx.fillText(`PAC-MAN ${CONFIG.VERSION}`, CONFIG.CANVAS_WIDTH - 120, 20);
-
-                // Legend (bottom-left)
-                ctx.font = '12px Arial';
-                ctx.fillText('Legend:', 10, CONFIG.CANVAS_HEIGHT - 80);
-                ctx.fillText('• Dots: +10 points', 10, CONFIG.CANVAS_HEIGHT - 60);
-                ctx.fillText('• Power Pellets: +50 points, Eat Ghosts', 10, CONFIG.CANVAS_HEIGHT - 40);
-                ctx.fillText('• Controls: Arrows or WASD', 10, CONFIG.CANVAS_HEIGHT - 20);
 
                 if (this.state !== 'playing') {
                     ctx.font = '32px Arial';
@@ -734,29 +573,33 @@
         }
 
         startGameLoop() {
-            const loop = (timestamp) => {
-                if (!this.lastTime) this.lastTime = timestamp;
-                const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
-                this.lastTime = timestamp;
-
-                try {
-                    if (this.state === 'playing') {
-                        this.update(delta);
-                    }
-                    this.render(timestamp);
-                    requestAnimationFrame(loop);
-                } catch (error) {
-                    console.error('Game loop error:', error);
-                    this.state = 'error';
-                    ctx.fillStyle = CONFIG.COLORS.TEXT;
-                    ctx.font = '20px Arial';
-                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
-                }
-            };
             try {
+                const loop = (timestamp) => {
+                    if (!this.lastTime) this.lastTime = timestamp;
+                    const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
+                    this.lastTime = timestamp;
+
+                    try {
+                        if (this.state === 'playing') {
+                            this.update(delta);
+                        }
+                        this.render(timestamp);
+                        requestAnimationFrame(loop);
+                    } catch (error) {
+                        console.error('Game loop error:', error);
+                        this.state = 'error';
+                        ctx.fillStyle = CONFIG.COLORS.TEXT;
+                        ctx.font = '20px Arial';
+                        ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
+                    }
+                };
+                if (!window.requestAnimationFrame) {
+                    console.warn('requestAnimationFrame not supported, using setTimeout fallback');
+                    window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
+                }
                 requestAnimationFrame(loop);
             } catch (e) {
-                console.error('Animation frame request failed:', e);
+                console.error('Game loop initialization failed:', e);
                 this.state = 'error';
                 ctx.fillStyle = CONFIG.COLORS.TEXT;
                 ctx.font = '20px Arial';
@@ -767,32 +610,29 @@
 
     // Bootstrap
     try {
-        console.log('Starting PAC-MAN v2.5 initialization...');
+        console.log('Starting PAC-MAN v2.6 initialization...');
         if (!canvas || !ctx) throw new Error('Canvas initialization failed');
         if (!window.requestAnimationFrame) {
             window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
             console.warn('requestAnimationFrame not supported, using setTimeout fallback');
         }
-        // Check audio support
-        let audioSupported = false;
-        try {
-            audioSupported = !!(window.AudioContext || window.webkitAudioContext);
-            if (!audioSupported) console.warn('Web Audio API not supported. Audio will be disabled.');
-        } catch (e) {
-            console.warn('Audio check failed:', e);
+        // Audio failsafe
+        let audioSupported = !!(window.AudioContext || window.webkitAudioContext);
+        if (!audioSupported) {
+            console.warn('Web Audio API not supported. Audio will be disabled.');
         }
         new Game();
-        console.log('PAC-MAN v2.5 initialized successfully');
+        console.log('PAC-MAN v2.6 initialized successfully');
     } catch (e) {
         console.error('PAC-MAN initialization failed:', e);
         displayError(`PAC-MAN failed to start: ${e.message}`, `
             <p>Troubleshooting:</p>
             <ul style="list-style: none; padding: 0;">
                 <li>1. Use a modern browser (Firefox, Brave, or Chrome).</li>
-                <li>2. Ensure Web MIDI is enabled (may require granting permission or installing a MIDI synthesizer).</li>
-                <li>3. Ensure Web Audio API is enabled (required for fallback sounds).</li>
-                <li>4. Serve files via a local server (not file:// protocol).</li>
-                <li>5. Check console (F12) for detailed errors.</li>
+                <li>2. Ensure Web Audio API is enabled (required for sounds).</li>
+                <li>3. Serve files via a local server (not file:// protocol).</li>
+                <li>4. Check console (F12) for detailed errors.</li>
+                <li>5. Ensure no browser extensions are blocking JavaScript.</li>
             </ul>
             <p><a href="https://www.mozilla.org/firefox/" target="_blank">Get Firefox</a> or <a href="https://brave.com/" target="_blank">Get Brave</a>.</p>
         `);
