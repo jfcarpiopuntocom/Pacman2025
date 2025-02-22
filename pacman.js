@@ -1,111 +1,105 @@
-// pacman_connected.js
+// pacman.js
 (() => {
     'use strict';
 
-    // CONFIGURATION & CONSTANTS
+    // **Configuration Constants** - Immutable settings for consistency
     const CONFIG = Object.freeze({
         TILE_SIZE: 16,
-        COLS: 28,
-        ROWS: 31,
-        CANVAS_WIDTH: 28 * 16,
-        CANVAS_HEIGHT: 31 * 16,
+        CANVAS_WIDTH: 448,  // 28 * 16
+        CANVAS_HEIGHT: 496, // 31 * 16
         COLORS: Object.freeze({
             BACKGROUND: '#000000',
-            WALL: '#0000FF',
+            WALL: '#1E90FF', // Dodger Blue for walls
             PACMAN: '#FFFF00',
-            GHOSTS: ['#FF0000', '#FFB8FF', '#00FFFF', '#FFB852'],
-            TEXT: '#FFFFFF',
-            FRIGHTENED: '#000080'
+            GHOSTS: ['#FF4500', '#FF69B4', '#00CED1', '#FFA500'], // Vibrant ghost colors
+            TEXT: '#F0F8FF', // Alice Blue for text
+            FRIGHTENED: '#483D8B', // Dark Slate Blue for frightened ghosts
+            DOT: '#FFD700', // Gold for dots
+            POWER: '#FFFFFF' // White for power pellets
         }),
         AUDIO: Object.freeze({
             DOT: 220,
             POWER: 440,
             DEATH: 110,
-            DURATION: 100
+            DURATION: 120
         }),
         SPEEDS: Object.freeze({
-            PACMAN: 2,
-            GHOST: 1.8,
-            GHOST_FRIGHTENED: 0.9
+            PACMAN: 2.2,
+            GHOST: 2,
+            GHOST_FRIGHTENED: 1
         }),
         GHOST_MODES: Object.freeze({
             SCATTER_DURATION: 20000,
-            CHASE_DURATION: 20000
-        })
+            CHASE_DURATION: 25000
+        }),
+        TUNNEL_Y: 14 * 16,
+        PACMAN_START: { x: 13.5 * 16, y: 26 * 16 }
     });
 
-    // NEW MAZE LAYOUT (28 columns x 31 rows)
-    // Row 14 is completely open to serve as a tunnel for horizontal wrap-around.
-    const NEW_MAZE = [
-        "############################", // row 0: Top wall
-        "#............##............#", // row 1
-        "#.####.#####.##.#####.####.#", // row 2
-        "#o####.#####.##.#####.####o#", // row 3
-        "#.####.#####.##.#####.####.#", // row 4
-        "#..........................#", // row 5
-        "#.####.##.########.##.####.#", // row 6
-        "#.####.##.########.##.####.#", // row 7
-        "#......##....##....##......#", // row 8
-        "######.##### ## #####.######", // row 9 (ghost-house row)
-        "#     .##### ## #####.     #", // row 10
-        "#     .##          ##.     #", // row 11
-        "#     .## ###--### ##.     #", // row 12
-        "######.## #      # ##.######", // row 13
-        "                            ", // row 14: *** Tunnel Row *** (28 spaces)
-        "######.## ######## ##.######", // row 15
-        "#............##............#", // row 16
-        "#.####.#####.##.#####.####.#", // row 17
-        "#.####.#####.##.#####.####.#", // row 18
-        "#o..##................##..o#", // row 19
-        "###.##.##.########.##.##.###", // row 20
-        "#....##.##.########.##.##...#", // row 21
-        "#.####.##############.####.#", // row 22
-        "#.####.##############.####.#", // row 23
-        "#..........................#", // row 24
-        "#.########################.#", // row 25: interior divider
-        "#..........................#", // row 26
-        "#.########################.#", // row 27
-        "#..........................#", // row 28
-        "#.########################.#", // row 29
-        "############################"  // row 30: Bottom wall
+    // **Maze Layout** - Authentic 28x31 Pac-Man arcade maze
+    const MAZE_TEMPLATE = [
+        "############################",
+        "#............##............#",
+        "#.####.#####.##.#####.####.#",
+        "#.####.#####.##.#####.####.#",
+        "#.####.#####.##.#####.####.#",
+        "#..........................#",
+        "#.####.##.########.##.####.#",
+        "#.####.##.########.##.####.#",
+        "#......##....##....##......#",
+        "######.##### ## #####.######",
+        "     #.##### ## #####.#     ",
+        "     #.##          ##.#     ",
+        "     #.## ###@@### ##.#     ",
+        "     #.## #      # ##.#     ",
+        "      .   #      #   .      ",
+        "     #.## #      # ##.#     ",
+        "     #.## ######## ##.#     ",
+        "     #.##          ##.#     ",
+        "#.....## ########## ##.....#",
+        "#.####.##          ##.####.#",
+        "#.####.##          ##.####.#",
+        "#o....## ########## ##....o#",
+        "######.## ########## ##.#####",
+        "#......##          ##......#",
+        "#.####.## ########## ##.####.#",
+        "#.####.## ########## ##.####.#",
+        "#......##          ##......#",
+        "#.####.#####.##.#####.####.#",
+        "#.####.#####.##.#####.####.#",
+        "#o....#####.##.#####....o#",
+        "############################"
     ];
 
-    // Canvas Setup (with beautified UI)
+    // Normalize maze rows to 28 characters
+    const MAZE = Object.freeze(MAZE_TEMPLATE.map(row => 
+        row.replace(/@/g, ' ').padEnd(28, ' ').substring(0, 28)
+    ));
+
+    // **Canvas Initialization** - Early validation
     const canvas = document.createElement('canvas');
     if (!canvas.getContext) throw new Error('Canvas not supported');
     const ctx = canvas.getContext('2d', { alpha: false });
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
-    canvas.style.border = '2px solid #FFF';
-    canvas.style.display = 'block';
-    canvas.style.margin = '20px auto';
-    document.body.appendChild(canvas);
     canvas.setAttribute('tabindex', '1');
+    document.body.appendChild(canvas);
     canvas.focus();
-    document.body.style.background = 'linear-gradient(45deg, #222, #555)';
-    document.body.style.fontFamily = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
 
-    // Utility Functions
+    // **Utility Functions** - Reusable helpers
     const Utils = {
-        getTile(x, y) {
-            return {
-                x: Math.floor(x / CONFIG.TILE_SIZE),
-                y: Math.floor(y / CONFIG.TILE_SIZE)
-            };
-        },
-        clamp(value, min, max) {
-            return Math.max(min, Math.min(max, value));
-        },
-        distance(x1, y1, x2, y2) {
-            return Math.hypot(x2 - x1, y2 - y1);
-        },
+        distance(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); },
+        clamp(value, min, max) { return Math.max(min, Math.min(max, value)); },
         randomDirection() {
             const dirs = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
             return dirs[Math.floor(Math.random() * dirs.length)];
+        },
+        getTile(x, y) {
+            return { x: Math.floor(x / CONFIG.TILE_SIZE), y: Math.floor(y / CONFIG.TILE_SIZE) };
         }
     };
 
-    // Audio Module
+    // **Audio Manager** - Robust sound handling
     class AudioManager {
         constructor() {
             try {
@@ -123,19 +117,16 @@
             osc.frequency.value = frequency;
             osc.connect(this.context.destination);
             osc.start();
-            setTimeout(() => {
-                osc.stop();
-                osc.disconnect();
-            }, duration);
+            setTimeout(() => osc.stop(), duration);
         }
     }
 
-    // Entity Management
+    // **Entity Manager** - Centralized entity state
     class EntityManager {
         constructor() {
             this.pacman = {
-                x: 13.5 * CONFIG.TILE_SIZE,
-                y: 23 * CONFIG.TILE_SIZE,
+                x: CONFIG.PACMAN_START.x,
+                y: CONFIG.PACMAN_START.y,
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
                 nextDirection: null,
@@ -146,44 +137,34 @@
                 powerTimer: 0
             };
             this.ghosts = [
-                { color: CONFIG.COLORS.GHOSTS[0], x: 12 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE },
-                { color: CONFIG.COLORS.GHOSTS[1], x: 14 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE },
-                { color: CONFIG.COLORS.GHOSTS[2], x: 13 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE },
-                { color: CONFIG.COLORS.GHOSTS[3], x: 15 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE }
+                { color: CONFIG.COLORS.GHOSTS[0], x: 13 * 16, y: 11 * 16 }, // Blinky
+                { color: CONFIG.COLORS.GHOSTS[1], x: 14 * 16, y: 13 * 16 }, // Pinky
+                { color: CONFIG.COLORS.GHOSTS[2], x: 12 * 16, y: 14 * 16 }, // Inky
+                { color: CONFIG.COLORS.GHOSTS[3], x: 15 * 16, y: 14 * 16 }  // Clyde
             ].map(g => ({
-                ...g,
-                speed: CONFIG.SPEEDS.GHOST,
-                direction: Utils.randomDirection(),
-                frightened: false,
-                mode: 'scatter',
-                modeTimer: 0
+                ...g, speed: CONFIG.SPEEDS.GHOST, direction: Utils.randomDirection(),
+                frightened: false, mode: 'scatter', modeTimer: 0
             }));
             this.dots = [];
             this.powerUps = [];
         }
         reset() {
             Object.assign(this.pacman, {
-                x: 13.5 * CONFIG.TILE_SIZE,
-                y: 23 * CONFIG.TILE_SIZE,
-                direction: 0,
-                nextDirection: null,
-                powerMode: false,
-                powerTimer: 0
+                x: CONFIG.PACMAN_START.x, y: CONFIG.PACMAN_START.y,
+                direction: 0, nextDirection: null, powerMode: false, powerTimer: 0
             });
             this.ghosts.forEach((g, i) => {
                 Object.assign(g, {
-                    x: [12, 14, 13, 15][i] * CONFIG.TILE_SIZE,
-                    y: [13, 13, 14, 14][i] * CONFIG.TILE_SIZE,
+                    x: [13, 14, 12, 15][i] * 16,
+                    y: [11, 13, 14, 14][i] * 16,
                     direction: Utils.randomDirection(),
-                    frightened: false,
-                    mode: 'scatter',
-                    modeTimer: 0
+                    frightened: false, mode: 'scatter', modeTimer: 0
                 });
             });
         }
     }
 
-    // Main Game Logic
+    // **Game Logic** - Core mechanics
     class PacmanGame {
         constructor() {
             this.entities = new EntityManager();
@@ -194,7 +175,7 @@
             this.lastTime = performance.now();
             this.keysPressed = new Set();
             this.globalModeTimer = 0;
-            this.maze = NEW_MAZE; // Use the new, connected maze layout
+            this.maze = MAZE;
             this.initMazeItems();
             this.bindControls();
             this.startGameLoop();
@@ -203,176 +184,130 @@
         initMazeItems() {
             for (let y = 0; y < this.maze.length; y++) {
                 for (let x = 0; x < this.maze[y].length; x++) {
-                    const ch = this.maze[y][x];
-                    if (ch === '.') {
-                        this.entities.dots.push({
-                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
-                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
-                        });
-                    } else if (ch === 'o') {
-                        this.entities.powerUps.push({
-                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
-                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
-                        });
+                    if (this.maze[y][x] === '.') {
+                        this.entities.dots.push({ x: x * 16 + 8, y: y * 16 + 8 });
+                    } else if (this.maze[y][x] === 'o') {
+                        this.entities.powerUps.push({ x: x * 16 + 8, y: y * 16 + 8 });
                     }
                 }
             }
         }
 
         bindControls() {
-            const keyMap = {
-                'arrowleft': Math.PI,
-                'arrowright': 0,
-                'arrowup': -Math.PI / 2,
-                'arrowdown': Math.PI / 2,
-                'a': Math.PI,
-                'd': 0,
-                'w': -Math.PI / 2,
-                's': Math.PI / 2
-            };
-
-            const keyDownHandler = (e) => {
+            const keyMap = Object.freeze({
+                'arrowleft': Math.PI, 'arrowright': 0,
+                'arrowup': -Math.PI / 2, 'arrowdown': Math.PI / 2,
+                'a': Math.PI, 'd': 0, 'w': -Math.PI / 2, 's': Math.PI / 2
+            });
+            const handleKeyDown = (e) => {
                 e.preventDefault();
-                const key = e.key.toLowerCase();
-                if (keyMap[key] !== undefined) {
-                    this.keysPressed.add(key);
-                    this.entities.pacman.nextDirection = keyMap[key];
+                const dir = keyMap[e.key.toLowerCase()];
+                if (dir !== undefined) {
+                    this.keysPressed.add(e.key.toLowerCase());
+                    this.entities.pacman.nextDirection = dir;
                 }
             };
-
-            const keyUpHandler = (e) => {
+            const handleKeyUp = (e) => {
                 e.preventDefault();
-                const key = e.key.toLowerCase();
-                this.keysPressed.delete(key);
-                if (this.keysPressed.size > 0) {
-                    this.entities.pacman.nextDirection = keyMap[Array.from(this.keysPressed).pop()];
-                } else {
-                    this.entities.pacman.nextDirection = null;
-                }
+                this.keysPressed.delete(e.key.toLowerCase());
+                this.entities.pacman.nextDirection = this.keysPressed.size > 0 ?
+                    keyMap[Array.from(this.keysPressed).pop()] : null;
             };
-
-            canvas.addEventListener('keydown', keyDownHandler);
-            canvas.addEventListener('keyup', keyUpHandler);
-            window.addEventListener('keydown', keyDownHandler);
-            window.addEventListener('keyup', keyUpHandler);
+            canvas.addEventListener('keydown', handleKeyDown);
+            canvas.addEventListener('keyup', handleKeyUp);
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
             canvas.addEventListener('click', () => {
                 canvas.focus();
-                if (this.audio.context && this.audio.context.state === 'suspended') {
-                    this.audio.context.resume();
-                }
+                if (this.audio.context?.state === 'suspended') this.audio.context.resume();
             });
         }
 
-        // Checks for wall collisions and applies tunnel logic if out-of-bounds.
         canMove(x, y, radius) {
-            let gridPos = Utils.getTile(x, y);
-            if (
-                gridPos.x < 0 || gridPos.x >= CONFIG.COLS ||
-                gridPos.y < 0 || gridPos.y >= CONFIG.ROWS
-            ) {
-                // Tunnel wrap-around horizontally
-                if (gridPos.x < 0) x = CONFIG.CANVAS_WIDTH + x;
-                else if (gridPos.x >= CONFIG.COLS) x = x - CONFIG.CANVAS_WIDTH;
-                gridPos = Utils.getTile(x, y);
-            }
-            return (this.maze[gridPos.y] && this.maze[gridPos.y][gridPos.x] !== '#');
+            const corners = [
+                [x + radius, y + radius], [x - radius, y + radius],
+                [x + radius, y - radius], [x - radius, y - radius]
+            ];
+            return corners.every(([cx, cy]) => {
+                const gx = Math.floor(cx / CONFIG.TILE_SIZE);
+                const gy = Math.floor(cy / CONFIG.TILE_SIZE);
+                return gx >= 0 && gx < 28 && gy >= 0 && gy < 31 && this.maze[gy][gx] !== '#';
+            });
         }
 
         getAvailableDirections(x, y, radius) {
-            const directions = [
-                { angle: 0, dx: 1, dy: 0 },
-                { angle: Math.PI, dx: -1, dy: 0 },
-                { angle: -Math.PI / 2, dx: 0, dy: -1 },
-                { angle: Math.PI / 2, dx: 0, dy: 1 }
+            const dirs = [
+                { angle: 0, dx: 1, dy: 0 }, { angle: Math.PI, dx: -1, dy: 0 },
+                { angle: -Math.PI / 2, dx: 0, dy: -1 }, { angle: Math.PI / 2, dx: 0, dy: 1 }
             ];
-            return directions.filter(dir =>
-                this.canMove(x + dir.dx * CONFIG.TILE_SIZE / 2,
-                             y + dir.dy * CONFIG.TILE_SIZE / 2, radius)
-            );
+            return dirs.filter(d => this.canMove(x + d.dx * 8, y + d.dy * 8, radius));
         }
 
         updateGhostAI(ghost, pacTile, delta) {
-            const ghostTile = Utils.getTile(ghost.x, ghost.y);
-            const availableDirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
-            if (availableDirs.length === 0) return;
+            const available = this.getAvailableDirections(ghost.x, ghost.y, 7);
+            if (!available.length) return;
+
             ghost.modeTimer += delta;
-            this.globalModeTimer += delta;
-            const modeDuration = ghost.mode === 'scatter' ?
-                CONFIG.GHOST_MODES.SCATTER_DURATION : CONFIG.GHOST_MODES.CHASE_DURATION;
-            if (ghost.modeTimer > modeDuration) {
-                ghost.mode = (ghost.mode === 'scatter') ? 'chase' : 'scatter';
+            if (ghost.modeTimer > (ghost.mode === 'scatter' ?
+                CONFIG.GHOST_MODES.SCATTER_DURATION : CONFIG.GHOST_MODES.CHASE_DURATION)) {
+                ghost.mode = ghost.mode === 'scatter' ? 'chase' : 'scatter';
                 ghost.modeTimer = 0;
             }
-            let targetX, targetY;
-            if (ghost.frightened) {
-                targetX = ghostTile.x * CONFIG.TILE_SIZE + (Math.random() - 0.5) * CONFIG.CANVAS_WIDTH;
-                targetY = ghostTile.y * CONFIG.TILE_SIZE + (Math.random() - 0.5) * CONFIG.CANVAS_HEIGHT;
-            } else if (ghost.mode === 'scatter') {
-                const scatterTargets = [
-                    { x: 25, y: 0 }, { x: 2, y: 0 },
-                    { x: 25, y: 30 }, { x: 2, y: 30 }
-                ];
-                const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
-                targetX = scatterTargets[idx].x * CONFIG.TILE_SIZE;
-                targetY = scatterTargets[idx].y * CONFIG.TILE_SIZE;
-            } else {
-                const pacX = pacTile.x * CONFIG.TILE_SIZE;
-                const pacY = pacTile.y * CONFIG.TILE_SIZE;
-                const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
-                switch (idx) {
-                    case 0:
-                        targetX = pacX;
-                        targetY = pacY;
-                        break;
-                    case 1:
-                        targetX = pacX + Math.cos(this.entities.pacman.direction) * 4 * CONFIG.TILE_SIZE;
-                        targetY = pacY + Math.sin(this.entities.pacman.direction) * 4 * CONFIG.TILE_SIZE;
-                        break;
-                    case 2:
-                        const blinky = this.entities.ghosts[0];
-                        targetX = pacX + (pacX - blinky.x);
-                        targetY = pacY + (pacY - blinky.y);
-                        break;
-                    case 3:
-                        const dist = Utils.distance(ghost.x, ghost.y, pacX, pacY);
-                        targetX = (dist > 8 * CONFIG.TILE_SIZE) ? pacX : 2 * CONFIG.TILE_SIZE;
-                        targetY = (dist > 8 * CONFIG.TILE_SIZE) ? pacY : 30 * CONFIG.TILE_SIZE;
-                        break;
-                }
+
+            const target = ghost.frightened ?
+                { x: Math.random() * CONFIG.CANVAS_WIDTH, y: Math.random() * CONFIG.CANVAS_HEIGHT } :
+                ghost.mode === 'scatter' ?
+                    [{ x: 25, y: 0 }, { x: 2, y: 0 }, { x: 25, y: 30 }, { x: 2, y: 30 }][
+                        CONFIG.COLORS.GHOSTS.indexOf(ghost.color)] :
+                    this.getChaseTarget(ghost, pacTile);
+
+            ghost.direction = available.reduce((best, dir) => {
+                const dist = Utils.distance(ghost.x + dir.dx * 16, ghost.y + dir.dy * 16,
+                    target.x * 16, target.y * 16);
+                return dist < Utils.distance(ghost.x + best.dx * 16, ghost.y + best.dy * 16,
+                    target.x * 16, target.y * 16) ? dir : best;
+            }, available[0]).angle;
+        }
+
+        getChaseTarget(ghost, pacTile) {
+            const pacX = pacTile.x, pacY = pacTile.y;
+            const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
+            switch (idx) {
+                case 0: return { x: pacX, y: pacY }; // Blinky
+                case 1: return { x: pacX + Math.cos(this.entities.pacman.direction) * 4,
+                                y: pacY + Math.sin(this.entities.pacman.direction) * 4 }; // Pinky
+                case 2: const blinky = Utils.getTile(this.entities.ghosts[0].x, this.entities.ghosts[0].y);
+                        return { x: pacX + (pacX - blinky.x), y: pacY + (pacY - blinky.y) }; // Inky
+                case 3: return Utils.distance(ghost.x, ghost.y, pacX * 16, pacY * 16) > 128 ?
+                        { x: pacX, y: pacY } : { x: 2, y: 30 }; // Clyde
             }
-            let bestDir = availableDirs[0].angle;
-            let minDist = Infinity;
-            availableDirs.forEach(dir => {
-                const newX = ghost.x + dir.dx * CONFIG.TILE_SIZE;
-                const newY = ghost.y + dir.dy * CONFIG.TILE_SIZE;
-                const dist = Utils.distance(newX, newY, targetX, targetY);
-                if (dist < minDist) {
-                    minDist = dist;
-                    bestDir = dir.angle;
-                }
-            });
-            ghost.direction = bestDir;
         }
 
         update(delta) {
-            delta = Utils.clamp(delta, 0, 100);
             const pac = this.entities.pacman;
             const speed = pac.speed * (delta / 16);
             const pacTile = Utils.getTile(pac.x, pac.y);
-            if (pac.nextDirection !== null &&
-                this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
-                             pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
+
+            // Direction and movement
+            if (pac.nextDirection !== null && this.canMove(
+                pac.x + Math.cos(pac.nextDirection) * speed,
+                pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
                 pac.direction = pac.nextDirection;
             }
             let newX = pac.x + Math.cos(pac.direction) * speed;
             let newY = pac.y + Math.sin(pac.direction) * speed;
-            // Tunnel wrap-around horizontally
-            if (newX < 0) newX = CONFIG.CANVAS_WIDTH + newX;
-            if (newX >= CONFIG.CANVAS_WIDTH) newX = newX - CONFIG.CANVAS_WIDTH;
+
+            // Tunnel failsafe
+            if (pacTile.y === 14) {
+                if (newX < -8) newX = CONFIG.CANVAS_WIDTH - 8;
+                else if (newX > CONFIG.CANVAS_WIDTH - 8) newX = -8;
+            }
             if (this.canMove(newX, newY, pac.radius)) {
                 pac.x = newX;
                 pac.y = newY;
             }
+
+            // Power mode
             if (pac.powerMode) {
                 pac.powerTimer -= delta;
                 if (pac.powerTimer <= 0) {
@@ -380,43 +315,46 @@
                     this.entities.ghosts.forEach(g => g.frightened = false);
                 }
             }
-            this.entities.dots = this.entities.dots.filter(dot => {
-                if (Utils.distance(pac.x, pac.y, dot.x, dot.y) <= pac.radius + 3) {
+
+            // Collectibles
+            this.entities.dots = this.entities.dots.filter(d => {
+                if (Utils.distance(pac.x, pac.y, d.x, d.y) < pac.radius + 3) {
                     this.score += 10;
                     this.audio.play(CONFIG.AUDIO.DOT);
                     return false;
                 }
                 return true;
             });
-            this.entities.powerUps = this.entities.powerUps.filter(power => {
-                if (Utils.distance(pac.x, pac.y, power.x, power.y) <= pac.radius + 4) {
+            this.entities.powerUps = this.entities.powerUps.filter(p => {
+                if (Utils.distance(pac.x, pac.y, p.x, p.y) < pac.radius + 5) {
                     this.score += 50;
                     pac.powerMode = true;
-                    pac.powerTimer = 5000;
+                    pac.powerTimer = 6000;
                     this.entities.ghosts.forEach(g => g.frightened = true);
                     this.audio.play(CONFIG.AUDIO.POWER);
                     return false;
                 }
                 return true;
             });
-            this.entities.ghosts.forEach(ghost => {
-                this.updateGhostAI(ghost, pacTile, delta);
-                const ghostSpeed = ghost.frightened ? CONFIG.SPEEDS.GHOST_FRIGHTENED : CONFIG.SPEEDS.GHOST;
-                let ghostX = ghost.x + Math.cos(ghost.direction) * ghostSpeed * (delta / 16);
-                let ghostY = ghost.y + Math.sin(ghost.direction) * ghostSpeed * (delta / 16);
-                if (ghostX < 0) ghostX = CONFIG.CANVAS_WIDTH + ghostX;
-                if (ghostX >= CONFIG.CANVAS_WIDTH) ghostX = ghostX - CONFIG.CANVAS_WIDTH;
-                if (this.canMove(ghostX, ghostY, 7)) {
-                    ghost.x = ghostX;
-                    ghost.y = ghostY;
-                } else {
-                    const dirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
-                    ghost.direction = dirs.length > 0 ? dirs[0].angle : ghost.direction;
+
+            // Ghost updates
+            this.entities.ghosts.forEach(g => {
+                this.updateGhostAI(g, pacTile, delta);
+                const gSpeed = g.frightened ? CONFIG.SPEEDS.GHOST_FRIGHTENED : CONFIG.SPEEDS.GHOST;
+                let gx = g.x + Math.cos(g.direction) * gSpeed * (delta / 16);
+                let gy = g.y + Math.sin(g.direction) * gSpeed * (delta / 16);
+                if (Utils.getTile(g.x, g.y).y === 14) {
+                    if (gx < -8) gx = CONFIG.CANVAS_WIDTH - 8;
+                    else if (gx > CONFIG.CANVAS_WIDTH - 8) gx = -8;
                 }
-                if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
+                if (this.canMove(gx, gy, 7)) {
+                    g.x = gx;
+                    g.y = gy;
+                }
+                if (Utils.distance(g.x, g.y, pac.x, pac.y) < 14) {
                     if (pac.powerMode) {
-                        ghost.x = 13.5 * CONFIG.TILE_SIZE;
-                        ghost.y = 11 * CONFIG.TILE_SIZE;
+                        g.x = 13.5 * 16;
+                        g.y = 11 * 16;
                         this.score += 200;
                     } else {
                         pac.lives--;
@@ -432,80 +370,80 @@
                     }
                 }
             });
-            if (this.entities.dots.length === 0 && this.entities.powerUps.length === 0) {
-                this.state = 'win';
-            }
+
+            if (!this.entities.dots.length && !this.entities.powerUps.length) this.state = 'win';
         }
 
         render(timestamp) {
-            const pac = this.entities.pacman;
-            // Draw a gradient background for a modern look
-            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#000022');
-            gradient.addColorStop(1, '#222255');
-            ctx.fillStyle = gradient;
+            ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            // Draw maze walls
+
+            // Maze with glow effect
             ctx.fillStyle = CONFIG.COLORS.WALL;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#1E90FF';
             for (let y = 0; y < this.maze.length; y++) {
                 for (let x = 0; x < this.maze[y].length; x++) {
                     if (this.maze[y][x] === '#') {
-                        ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE,
-                                     CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                        ctx.fillRect(x * 16, y * 16, 16, 16);
                     }
                 }
             }
-            // Draw pellets and power-ups
-            ctx.fillStyle = CONFIG.COLORS.TEXT;
-            this.entities.dots.forEach(dot => {
+            ctx.shadowBlur = 0;
+
+            // Dots and power-ups
+            ctx.fillStyle = CONFIG.COLORS.DOT;
+            this.entities.dots.forEach(d => {
                 ctx.beginPath();
-                ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
+                ctx.arc(d.x, d.y, 3, 0, Math.PI * 2);
                 ctx.fill();
             });
-            this.entities.powerUps.forEach(power => {
+            ctx.fillStyle = CONFIG.COLORS.POWER;
+            this.entities.powerUps.forEach(p => {
                 ctx.beginPath();
-                ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, 5 + Math.sin(timestamp * 0.005), 0, Math.PI * 2);
                 ctx.fill();
             });
-            // Draw Pac-Man with animated mouth
+
+            // Pacman with animation
             ctx.fillStyle = pac.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
-            pac.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
+            const pac = this.entities.pacman;
+            pac.mouthAngle = Math.sin(timestamp * 0.015) * 0.6 + 0.6;
             ctx.beginPath();
-            ctx.arc(pac.x, pac.y, pac.radius,
-                    pac.direction + pac.mouthAngle,
-                    pac.direction + 2 * Math.PI - pac.mouthAngle);
+            ctx.arc(pac.x, pac.y, pac.radius, pac.direction + pac.mouthAngle,
+                pac.direction + 2 * Math.PI - pac.mouthAngle);
             ctx.lineTo(pac.x, pac.y);
             ctx.fill();
-            // Draw ghosts with simple eyes
-            this.entities.ghosts.forEach(ghost => {
-                ctx.fillStyle = ghost.frightened ? CONFIG.COLORS.FRIGHTENED : ghost.color;
+
+            // Ghosts with eyes
+            this.entities.ghosts.forEach(g => {
+                ctx.fillStyle = g.frightened ? CONFIG.COLORS.FRIGHTENED : g.color;
                 ctx.beginPath();
-                ctx.arc(ghost.x, ghost.y, 7, 0, Math.PI);
-                ctx.lineTo(ghost.x + 7, ghost.y + 7);
+                ctx.arc(g.x, g.y, 7, 0, Math.PI);
+                ctx.lineTo(g.x + 7, g.y + 7);
                 for (let i = 5; i >= -5; i -= 2) {
-                    ctx.lineTo(ghost.x + i, ghost.y + (Math.abs(i) === 5 ? 7 : 5));
+                    ctx.lineTo(g.x + i, g.y + (Math.abs(i) === 5 ? 7 : 5));
                 }
                 ctx.fill();
-                ctx.fillStyle = CONFIG.COLORS.TEXT;
-                ctx.beginPath();
-                ctx.arc(ghost.x - 3, ghost.y - 2, 2, 0, Math.PI * 2);
-                ctx.arc(ghost.x + 3, ghost.y - 2, 2, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(g.x - 3, g.y - 3, 2, 4);
+                ctx.fillRect(g.x + 1, g.y - 3, 2, 4);
             });
-            // Draw HUD with drop shadow for style
-            ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-            ctx.shadowBlur = 4;
+
+            // HUD
             ctx.fillStyle = CONFIG.COLORS.TEXT;
-            ctx.font = '16px Segoe UI, Tahoma, sans-serif';
-            ctx.fillText(`Score: ${this.score}`, 10, 20);
-            ctx.fillText(`High: ${this.highScore}`, 150, 20);
-            ctx.fillText(`Lives: ${pac.lives}`, 360, 20);
-            ctx.restore();
+            ctx.font = '18px "Press Start 2P", Arial';
+            ctx.fillText(`Score: ${this.score}`, 10, 30);
+            ctx.fillText(`High: ${this.highScore}`, 160, 30);
+            ctx.fillText(`Lives: ${pac.lives}`, 320, 30);
+
             if (this.state !== 'playing') {
-                ctx.font = '32px Segoe UI, Tahoma, sans-serif';
-                const msg = (this.state === 'win') ? 'You Win!' : 'Game Over';
-                ctx.fillText(msg, canvas.width / 2 - 80, canvas.height / 2);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                ctx.font = '36px "Press Start 2P", Arial';
+                ctx.fillText(this.state === 'win' ? 'YOU WIN!' : 'GAME OVER',
+                    canvas.width / 2 - 130, canvas.height / 2);
             }
         }
 
@@ -517,26 +455,23 @@
                     if (this.state === 'playing') this.update(delta);
                     this.render(timestamp);
                     requestAnimationFrame(loop);
-                } catch (error) {
-                    console.error('Game loop error:', error);
+                } catch (e) {
+                    console.error('Game loop error:', e);
                     this.state = 'error';
                     ctx.fillStyle = CONFIG.COLORS.TEXT;
-                    ctx.font = '20px Arial';
-                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
+                    ctx.fillText('Game Crashed!', 100, canvas.height / 2);
                 }
             };
             requestAnimationFrame(loop);
         }
     }
 
-    if (!window.requestAnimationFrame) {
-        window.requestAnimationFrame = (cb) => setTimeout(cb, 16);
-    }
-
+    // **Bootstrap**
     try {
+        if (!window.requestAnimationFrame) window.requestAnimationFrame = cb => setTimeout(cb, 16);
         new PacmanGame();
     } catch (e) {
-        console.error('Initialization failed:', e);
-        document.body.textContent = 'Pacman failed to start. Check browser compatibility.';
+        console.error('Failed to start:', e);
+        document.body.textContent = 'Pacman failed to load. Please refresh.';
     }
 })();
