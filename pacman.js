@@ -1,6 +1,6 @@
 // pacman.js
 (() => {
-    // Constants Configuration
+    // Configuration
     const CONFIG = Object.freeze({
         TILE_SIZE: 16,
         CANVAS_WIDTH: 448,
@@ -20,9 +20,10 @@
             DURATION: 100
         },
         SPEEDS: {
-            PACMAN: 2,
-            GHOST: 1.8
-        }
+            PACMAN: 2.5,
+            GHOST: 2
+        },
+        POWER_DURATION: 5000
     });
 
     const MAZE = Object.freeze([
@@ -65,11 +66,11 @@
     const ctx = canvas.getContext('2d', { alpha: false });
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
-    canvas.tabIndex = 0; // Make canvas focusable
+    canvas.tabIndex = 0;
     document.body.appendChild(canvas);
     canvas.focus();
 
-    // Utility Functions
+    // Utilities
     const Utils = {
         distance(x1, y1, x2, y2) {
             return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
@@ -79,10 +80,13 @@
         },
         randomDirection() {
             return [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random() * 4)];
+        },
+        tileToPixel(tile) {
+            return tile * CONFIG.TILE_SIZE;
         }
     };
 
-    // Audio Module
+    // Audio Manager
     class AudioManager {
         constructor() {
             this.context = window.AudioContext || window.webkitAudioContext ?
@@ -104,12 +108,12 @@
         }
     }
 
-    // Entity Management
+    // Entity Manager
     class EntityManager {
         constructor() {
             this.pacman = {
-                x: 13.5 * CONFIG.TILE_SIZE,
-                y: 23 * CONFIG.TILE_SIZE,
+                x: Utils.tileToPixel(13.5),
+                y: Utils.tileToPixel(23),
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
                 nextDirection: 0,
@@ -121,11 +125,13 @@
             };
 
             this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => ({
-                x: (13 + (i % 2)) * CONFIG.TILE_SIZE,
-                y: (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE,
+                x: Utils.tileToPixel(13 + (i % 2)),
+                y: Utils.tileToPixel(11 + Math.floor(i / 2)),
                 color,
                 speed: CONFIG.SPEEDS.GHOST,
-                direction: Utils.randomDirection()
+                direction: Utils.randomDirection(),
+                mode: 'scatter',
+                modeTimer: 0
             }));
 
             this.dots = [];
@@ -133,14 +139,18 @@
         }
 
         reset() {
-            this.pacman.x = 13.5 * CONFIG.TILE_SIZE;
-            this.pacman.y = 23 * CONFIG.TILE_SIZE;
+            this.pacman.x = Utils.tileToPixel(13.5);
+            this.pacman.y = Utils.tileToPixel(23);
             this.pacman.direction = 0;
             this.pacman.nextDirection = 0;
+            this.pacman.powerMode = false;
+            this.pacman.powerTimer = 0;
             this.ghosts.forEach((g, i) => {
-                g.x = (13 + (i % 2)) * CONFIG.TILE_SIZE;
-                g.y = (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE;
+                g.x = Utils.tileToPixel(13 + (i % 2));
+                g.y = Utils.tileToPixel(11 + Math.floor(i / 2));
                 g.direction = Utils.randomDirection();
+                g.mode = 'scatter';
+                g.modeTimer = 0;
             });
         }
     }
@@ -165,13 +175,13 @@
                 for (let x = 0; x < MAZE[y].length; x++) {
                     if (MAZE[y][x] === '.') {
                         this.entities.dots.push({
-                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2,
-                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2
+                            x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE/2,
+                            y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE/2
                         });
                     } else if (MAZE[y][x] === 'o') {
                         this.entities.powerUps.push({
-                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2,
-                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2
+                            x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE/2,
+                            y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE/2
                         });
                     }
                 }
@@ -180,51 +190,83 @@
 
         bindControls() {
             const keyMap = {
-                'ArrowLeft': Math.PI,
-                'ArrowRight': 0,
-                'ArrowUp': -Math.PI/2,
-                'ArrowDown': Math.PI/2,
-                'a': Math.PI,      // Left
-                'd': 0,           // Right
-                'w': -Math.PI/2,  // Up
-                's': Math.PI/2    // Down
+                'arrowleft': Math.PI,
+                'arrowright': 0,
+                'arrowup': -Math.PI/2,
+                'arrowdown': Math.PI/2,
+                'a': Math.PI,
+                'd': 0,
+                'w': -Math.PI/2,
+                's': Math.PI/2
             };
 
             canvas.addEventListener('keydown', (e) => {
                 e.preventDefault();
-                if (keyMap[e.key.toLowerCase()]) {
-                    this.keysPressed.add(e.key.toLowerCase());
-                    this.entities.pacman.nextDirection = keyMap[e.key.toLowerCase()];
+                const key = e.key.toLowerCase();
+                if (keyMap[key]) {
+                    this.keysPressed.add(key);
+                    this.entities.pacman.nextDirection = keyMap[key];
+                    console.log('Key down:', key, 'Direction:', this.entities.pacman.nextDirection);
                 }
             });
 
             canvas.addEventListener('keyup', (e) => {
                 e.preventDefault();
-                this.keysPressed.delete(e.key.toLowerCase());
+                const key = e.key.toLowerCase();
+                this.keysPressed.delete(key);
                 if (this.keysPressed.size > 0) {
                     const lastKey = Array.from(this.keysPressed).pop();
                     this.entities.pacman.nextDirection = keyMap[lastKey];
-                } else {
-                    // Don't stop movement, keep last direction
-                    // this.entities.pacman.nextDirection = this.entities.pacman.direction;
+                    console.log('Key up, new direction:', this.entities.pacman.nextDirection);
                 }
             });
 
-            // Ensure focus
             canvas.addEventListener('click', () => {
                 canvas.focus();
+                console.log('Canvas focused');
             });
         }
 
-        canMove(x, y, radius = 0) {
+        canMove(x, y, radius) {
             const gridX = Math.floor((x + radius) / CONFIG.TILE_SIZE);
             const gridY = Math.floor((y + radius) / CONFIG.TILE_SIZE);
             const gridX2 = Math.floor((x - radius) / CONFIG.TILE_SIZE);
             const gridY2 = Math.floor((y - radius) / CONFIG.TILE_SIZE);
-            
+
             return (gridX >= 0 && gridX < 28 && gridY >= 0 && gridY < 31 &&
                     gridX2 >= 0 && gridX2 < 28 && gridY2 >= 0 && gridY2 < 31 &&
                     MAZE[gridY][gridX] !== '#' && MAZE[gridY2][gridX2] !== '#');
+        }
+
+        updateGhostAI(ghost, pacman, delta) {
+            ghost.modeTimer -= delta;
+            if (ghost.modeTimer <= 0) {
+                ghost.mode = ghost.mode === 'scatter' ? 'chase' : 'scatter';
+                ghost.modeTimer = 7000; // Switch every 7 seconds
+            }
+
+            const dx = pacman.x - ghost.x;
+            const dy = pacman.y - ghost.y;
+            let targetAngle;
+            if (pacman.powerMode) {
+                targetAngle = Utils.randomDirection(); // Flee
+            } else if (ghost.mode === 'chase') {
+                targetAngle = Math.atan2(dy, dx);
+            } else {
+                targetAngle = Utils.randomDirection(); // Scatter
+            }
+
+            const speed = ghost.speed * delta / 16;
+            const newX = ghost.x + Math.cos(targetAngle) * speed;
+            const newY = ghost.y + Math.sin(targetAngle) * speed;
+
+            if (this.canMove(newX, newY, 7)) {
+                ghost.x = newX;
+                ghost.y = newY;
+                ghost.direction = targetAngle;
+            } else {
+                ghost.direction = Utils.randomDirection();
+            }
         }
 
         update(delta) {
@@ -265,7 +307,7 @@
                 if (Utils.distance(pac.x, pac.y, power.x, power.y) < pac.radius) {
                     this.score += 50;
                     pac.powerMode = true;
-                    pac.powerTimer = 5000;
+                    pac.powerTimer = CONFIG.POWER_DURATION;
                     this.audio.play(CONFIG.AUDIO.POWER);
                     return false;
                 }
@@ -274,22 +316,12 @@
 
             // Ghost movement
             this.entities.ghosts.forEach(ghost => {
-                const dx = pac.x - ghost.x;
-                const dy = pac.y - ghost.y;
-                const targetAngle = pac.powerMode ? Utils.randomDirection() : Math.atan2(dy, dx);
-                ghost.direction = targetAngle;
-                const ghostX = ghost.x + Math.cos(ghost.direction) * ghost.speed * delta / 16;
-                const ghostY = ghost.y + Math.sin(ghost.direction) * ghost.speed * delta / 16;
-                
-                if (this.canMove(ghostX, ghostY, 7)) {
-                    ghost.x = ghostX;
-                    ghost.y = ghostY;
-                }
+                this.updateGhostAI(ghost, pac, delta);
 
                 if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
                     if (pac.powerMode) {
-                        ghost.x = 13.5 * CONFIG.TILE_SIZE;
-                        ghost.y = 11 * CONFIG.TILE_SIZE;
+                        ghost.x = Utils.tileToPixel(13.5);
+                        ghost.y = Utils.tileToPixel(11);
                         this.score += 200;
                     } else {
                         pac.lives--;
