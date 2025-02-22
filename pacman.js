@@ -20,7 +20,7 @@
         },
         POWER_DURATION: 5000,
         MODE_SWITCH_INTERVAL: 7000,
-        VERSION: 'v2.4',
+        VERSION: 'v2.5',
         MIDI: {
             CHANNEL: 0,
             BACKGROUND_TEMPO: 120,
@@ -115,6 +115,36 @@
         `;
     }
 
+    // Audio Manager (Web Audio API Fallback)
+    class AudioManager {
+        constructor() {
+            this.context = null;
+            try {
+                this.context = window.AudioContext || window.webkitAudioContext ?
+                    new (window.AudioContext || window.webkitAudioContext)() : null;
+                if (!this.context) throw new Error('Web Audio API not supported');
+                console.log('AudioManager initialized successfully');
+            } catch (e) {
+                console.warn('Web Audio API initialization failed:', e);
+                this.context = null;
+            }
+        }
+
+        play(frequency, duration = 100) {
+            if (!this.context) return;
+            try {
+                const osc = this.context.createOscillator();
+                osc.type = 'sine'; // Softer, MIDI-like sound
+                osc.frequency.value = frequency;
+                osc.connect(this.context.destination);
+                osc.start();
+                osc.stop(this.context.currentTime + duration / 1000);
+            } catch (e) {
+                console.warn('Audio playback failed:', e);
+            }
+        }
+    }
+
     // MIDI Manager
     class MidiManager {
         constructor() {
@@ -129,11 +159,11 @@
             try {
                 if (!navigator.requestMIDIAccess) {
                     console.warn('Web MIDI API not supported. Using fallback audio.');
-                    this.synthesizer = new FallbackSynthesizer();
+                    this.synthesizer = new AudioManager(); // Use AudioManager as fallback
                     return;
                 }
                 const midiAccess = await Promise.race([
-                    navigator.requestMIDIAccess({ sysex: false }), // No SysEx for broader compatibility
+                    navigator.requestMIDIAccess({ sysex: false }),
                     new Promise((_, reject) => setTimeout(() => reject(new Error('MIDI access timed out')), 5000))
                 ]);
                 const outputs = midiAccess.outputs.values();
@@ -143,7 +173,7 @@
                     break;
                 }
                 if (!this.synthesizer) throw new Error('No MIDI output found');
-                // Request MIDI permission if needed (some browsers prompt)
+                // Request MIDI permission if needed
                 if (!midiAccess.outputs.size) {
                     alert('Please enable MIDI devices in your browser settings or connect a MIDI synthesizer.');
                     throw new Error('MIDI permission or device not available');
@@ -151,7 +181,7 @@
             } catch (e) {
                 console.warn('MIDI initialization failed:', e);
                 alert(`MIDI failed to initialize: ${e.message}. The game will use fallback audio.`);
-                this.synthesizer = new FallbackSynthesizer();
+                this.synthesizer = new AudioManager(); // Fallback to AudioManager
             }
         }
 
@@ -162,7 +192,7 @@
                     this.synthesizer.send([0x90 + CONFIG.MIDI.CHANNEL, note, velocity]); // Note on
                     setTimeout(() => this.synthesizer.send([0x80 + CONFIG.MIDI.CHANNEL, note, 0]), duration); // Note off
                 } else {
-                    this.synthesizer.play(note, duration);
+                    this.synthesizer.play(note, duration); // Fallback to Web Audio
                 }
             } catch (e) {
                 console.warn('MIDI note playback failed:', e);
@@ -185,28 +215,6 @@
             if (this.backgroundInterval) {
                 clearInterval(this.backgroundInterval);
                 this.isPlaying = false;
-            }
-        }
-    }
-
-    // Fallback Synthesizer (Web Audio API)
-    class FallbackSynthesizer {
-        constructor() {
-            this.context = window.AudioContext || window.webkitAudioContext ?
-                new (window.AudioContext || window.webkitAudioContext)() : null;
-        }
-
-        play(frequency, duration = 100) {
-            if (!this.context) return;
-            try {
-                const osc = this.context.createOscillator();
-                osc.type = 'sine'; // Softer, MIDI-like sound
-                osc.frequency.value = frequency;
-                osc.connect(this.context.destination);
-                osc.start();
-                osc.stop(this.context.currentTime + duration / 1000);
-            } catch (e) {
-                console.warn('Fallback audio failed:', e);
             }
         }
     }
@@ -279,7 +287,7 @@
     // Pacman Module
     class Pacman {
         constructor() {
-            this.x = Utils.tileToPixel(13.5);
+            this.x =Utils.tileToPixel(13.5);
             this.y = Utils.tileToPixel(23);
             this.speed = CONFIG.SPEEDS.PACMAN;
             this.direction = 0;
@@ -487,7 +495,7 @@
             this.maze = new Maze();
             this.pacman = new Pacman();
             this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => new Ghost(color, Utils.tileToPixel(13 + (i % 2)), Utils.tileToPixel(11 + Math.floor(i / 2))));
-            this.audio = new AudioManager();
+            this.audio = new AudioManager(); // Reintroduced AudioManager
             this.midi = new MidiManager();
             this.score = 0;
             this.highScore = this.getHighScore() || 0;
@@ -609,7 +617,11 @@
                 this.maze.dots = this.maze.dots.filter(dot => {
                     if (Utils.distance(this.pacman.x, this.pacman.y, dot.x, dot.y) < this.pacman.radius) {
                         this.score += 10;
-                        this.midi.playNote(CONFIG.MIDI.DOT_NOTE);
+                        if (this.midi.synthesizer) {
+                            this.midi.playNote(CONFIG.MIDI.DOT_NOTE);
+                        } else if (this.audio.context) {
+                            this.audio.play(CONFIG.MIDI.DOT_NOTE * 8.1758); // Convert MIDI note to Hz (440 * 2^((note-69)/12))
+                        }
                         return false;
                     }
                     return true;
@@ -621,7 +633,11 @@
                         this.score += 50;
                         this.pacman.powerMode = true;
                         this.pacman.powerTimer = CONFIG.POWER_DURATION;
-                        this.midi.playNote(CONFIG.MIDI.POWER_NOTE);
+                        if (this.midi.synthesizer) {
+                            this.midi.playNote(CONFIG.MIDI.POWER_NOTE);
+                        } else if (this.audio.context) {
+                            this.audio.play(CONFIG.MIDI.POWER_NOTE * 8.1758); // Convert MIDI note to Hz
+                        }
                         return false;
                     }
                     return true;
@@ -639,10 +655,18 @@
                         if (this.pacman.powerMode) {
                             ghost.reset();
                             this.score += 200;
-                            this.midi.playNote(CONFIG.MIDI.POWER_NOTE, 300);
+                            if (this.midi.synthesizer) {
+                                this.midi.playNote(CONFIG.MIDI.POWER_NOTE, 300);
+                            } else if (this.audio.context) {
+                                this.audio.play(CONFIG.MIDI.POWER_NOTE * 8.1758, 300);
+                            }
                         } else {
                             this.pacman.lives--;
-                            this.midi.playNote(CONFIG.MIDI.DEATH_NOTE, 300);
+                            if (this.midi.synthesizer) {
+                                this.midi.playNote(CONFIG.MIDI.DEATH_NOTE, 300);
+                            } else if (this.audio.context) {
+                                this.audio.play(CONFIG.MIDI.DEATH_NOTE * 8.1758, 300);
+                            }
                             this.pacman.reset();
                             if (this.pacman.lives <= 0) {
                                 this.state = 'gameover';
@@ -722,7 +746,7 @@
                     this.render(timestamp);
                     requestAnimationFrame(loop);
                 } catch (error) {
-                    console.error('Game loop error:', e);
+                    console.error('Game loop error:', error);
                     this.state = 'error';
                     ctx.fillStyle = CONFIG.COLORS.TEXT;
                     ctx.font = '20px Arial';
@@ -743,18 +767,22 @@
 
     // Bootstrap
     try {
-        console.log('Starting PAC-MAN v2.4 initialization...');
+        console.log('Starting PAC-MAN v2.5 initialization...');
         if (!canvas || !ctx) throw new Error('Canvas initialization failed');
         if (!window.requestAnimationFrame) {
             window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
             console.warn('requestAnimationFrame not supported, using setTimeout fallback');
         }
-        // Check Web Audio API (for fallback audio)
-        if (!(window.AudioContext || window.webkitAudioContext)) {
-            console.warn('Web Audio API not supported. Audio will be disabled.');
+        // Check audio support
+        let audioSupported = false;
+        try {
+            audioSupported = !!(window.AudioContext || window.webkitAudioContext);
+            if (!audioSupported) console.warn('Web Audio API not supported. Audio will be disabled.');
+        } catch (e) {
+            console.warn('Audio check failed:', e);
         }
         new Game();
-        console.log('PAC-MAN v2.4 initialized successfully');
+        console.log('PAC-MAN v2.5 initialized successfully');
     } catch (e) {
         console.error('PAC-MAN initialization failed:', e);
         displayError(`PAC-MAN failed to start: ${e.message}`, `
@@ -762,8 +790,9 @@
             <ul style="list-style: none; padding: 0;">
                 <li>1. Use a modern browser (Firefox, Brave, or Chrome).</li>
                 <li>2. Ensure Web MIDI is enabled (may require granting permission or installing a MIDI synthesizer).</li>
-                <li>3. Serve files via a local server (not file:// protocol).</li>
-                <li>4. Check console (F12) for detailed errors.</li>
+                <li>3. Ensure Web Audio API is enabled (required for fallback sounds).</li>
+                <li>4. Serve files via a local server (not file:// protocol).</li>
+                <li>5. Check console (F12) for detailed errors.</li>
             </ul>
             <p><a href="https://www.mozilla.org/firefox/" target="_blank">Get Firefox</a> or <a href="https://brave.com/" target="_blank">Get Brave</a>.</p>
         `);
