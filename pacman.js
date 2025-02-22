@@ -1,4 +1,4 @@
-// pacman_redesigned.js
+// pacman_connected.js
 (() => {
     'use strict';
 
@@ -34,9 +34,10 @@
         })
     });
 
-    // Redesigned Maze Layout (31 rows x 28 columns)
+    // NEW MAZE LAYOUT (28 columns x 31 rows)
+    // Row 14 is completely open to serve as a tunnel for horizontal wrap-around.
     const NEW_MAZE = [
-        "############################", // row 0
+        "############################", // row 0: Top wall
         "#............##............#", // row 1
         "#.####.#####.##.#####.####.#", // row 2
         "#o####.#####.##.#####.####o#", // row 3
@@ -45,28 +46,28 @@
         "#.####.##.########.##.####.#", // row 6
         "#.####.##.########.##.####.#", // row 7
         "#......##....##....##......#", // row 8
-        "######.##### ## #####.######", // row 9
+        "######.##### ## #####.######", // row 9 (ghost-house row)
         "#     .##### ## #####.     #", // row 10
         "#     .##          ##.     #", // row 11
-        "#     .## ###  ### ##.     #", // row 12
-        "#      ##    ##      ##    #", // row 13
-        "#      ##    ##      ##    #", // row 14
-        "#      ##    ##      ##    #", // row 15
-        "#.....## ########## ##.....#", // row 16
-        "#.####.##          ##.####.#", // row 17
-        "#.####.##          ##.####.#", // row 18
-        "#......## ########## ##.....#", // row 19
-        "#.####.## ########## ##.####.#", // row 20
-        "#.####.##          ##.####.#", // row 21
-        "#o..##...          ...##..o#", // row 22
-        "#####.## ########## ##.#####", // row 23
-        "#.... ## ########## ## ....#", // row 24
-        "#.####.##############.####.#", // row 25
-        "#.####.##############.####.#", // row 26
-        "#..........................#", // row 27
-        "#.####.#####.##.#####.####.#", // row 28
-        "#............##............#", // row 29
-        "############################"  // row 30
+        "#     .## ###--### ##.     #", // row 12
+        "######.## #      # ##.######", // row 13
+        "                            ", // row 14: *** Tunnel Row *** (28 spaces)
+        "######.## ######## ##.######", // row 15
+        "#............##............#", // row 16
+        "#.####.#####.##.#####.####.#", // row 17
+        "#.####.#####.##.#####.####.#", // row 18
+        "#o..##................##..o#", // row 19
+        "###.##.##.########.##.##.###", // row 20
+        "#....##.##.########.##.##...#", // row 21
+        "#.####.##############.####.#", // row 22
+        "#.####.##############.####.#", // row 23
+        "#..........................#", // row 24
+        "#.########################.#", // row 25: interior divider
+        "#..........................#", // row 26
+        "#.########################.#", // row 27
+        "#..........................#", // row 28
+        "#.########################.#", // row 29
+        "############################"  // row 30: Bottom wall
     ];
 
     // Canvas Setup (with beautified UI)
@@ -87,7 +88,10 @@
     // Utility Functions
     const Utils = {
         getTile(x, y) {
-            return { x: Math.floor(x / CONFIG.TILE_SIZE), y: Math.floor(y / CONFIG.TILE_SIZE) };
+            return {
+                x: Math.floor(x / CONFIG.TILE_SIZE),
+                y: Math.floor(y / CONFIG.TILE_SIZE)
+            };
         },
         clamp(value, min, max) {
             return Math.max(min, Math.min(max, value));
@@ -96,7 +100,7 @@
             return Math.hypot(x2 - x1, y2 - y1);
         },
         randomDirection() {
-            const dirs = [0, Math.PI/2, Math.PI, -Math.PI/2];
+            const dirs = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
             return dirs[Math.floor(Math.random() * dirs.length)];
         }
     };
@@ -104,11 +108,11 @@
     // Audio Module
     class AudioManager {
         constructor() {
-            this.context = null;
             try {
                 this.context = new (window.AudioContext || window.webkitAudioContext)();
             } catch (e) {
                 console.warn('AudioContext unavailable:', e);
+                this.context = null;
             }
         }
         play(frequency, duration = CONFIG.AUDIO.DURATION) {
@@ -119,7 +123,10 @@
             osc.frequency.value = frequency;
             osc.connect(this.context.destination);
             osc.start();
-            setTimeout(() => { osc.stop(); osc.disconnect(); }, duration);
+            setTimeout(() => {
+                osc.stop();
+                osc.disconnect();
+            }, duration);
         }
     }
 
@@ -176,7 +183,7 @@
         }
     }
 
-    // Main Game Logic (integrates NEW_MAZE)
+    // Main Game Logic
     class PacmanGame {
         constructor() {
             this.entities = new EntityManager();
@@ -187,7 +194,7 @@
             this.lastTime = performance.now();
             this.keysPressed = new Set();
             this.globalModeTimer = 0;
-            this.maze = NEW_MAZE; // Use the redesigned layout here
+            this.maze = NEW_MAZE; // Use the new, connected maze layout
             this.initMazeItems();
             this.bindControls();
             this.startGameLoop();
@@ -223,6 +230,7 @@
                 'w': -Math.PI / 2,
                 's': Math.PI / 2
             };
+
             const keyDownHandler = (e) => {
                 e.preventDefault();
                 const key = e.key.toLowerCase();
@@ -231,6 +239,7 @@
                     this.entities.pacman.nextDirection = keyMap[key];
                 }
             };
+
             const keyUpHandler = (e) => {
                 e.preventDefault();
                 const key = e.key.toLowerCase();
@@ -241,6 +250,7 @@
                     this.entities.pacman.nextDirection = null;
                 }
             };
+
             canvas.addEventListener('keydown', keyDownHandler);
             canvas.addEventListener('keyup', keyUpHandler);
             window.addEventListener('keydown', keyDownHandler);
@@ -253,6 +263,7 @@
             });
         }
 
+        // Checks for wall collisions and applies tunnel logic if out-of-bounds.
         canMove(x, y, radius) {
             let gridPos = Utils.getTile(x, y);
             if (
@@ -260,8 +271,8 @@
                 gridPos.y < 0 || gridPos.y >= CONFIG.ROWS
             ) {
                 // Tunnel wrap-around horizontally
-                if (gridPos.x < 0) x = (CONFIG.COLS - 1) * CONFIG.TILE_SIZE + x % CONFIG.TILE_SIZE;
-                else if (gridPos.x >= CONFIG.COLS) x = x % CONFIG.TILE_SIZE;
+                if (gridPos.x < 0) x = CONFIG.CANVAS_WIDTH + x;
+                else if (gridPos.x >= CONFIG.COLS) x = x - CONFIG.CANVAS_WIDTH;
                 gridPos = Utils.getTile(x, y);
             }
             return (this.maze[gridPos.y] && this.maze[gridPos.y][gridPos.x] !== '#');
@@ -271,8 +282,8 @@
             const directions = [
                 { angle: 0, dx: 1, dy: 0 },
                 { angle: Math.PI, dx: -1, dy: 0 },
-                { angle: -Math.PI/2, dx: 0, dy: -1 },
-                { angle: Math.PI/2, dx: 0, dy: 1 }
+                { angle: -Math.PI / 2, dx: 0, dy: -1 },
+                { angle: Math.PI / 2, dx: 0, dy: 1 }
             ];
             return directions.filter(dir =>
                 this.canMove(x + dir.dx * CONFIG.TILE_SIZE / 2,
@@ -289,7 +300,7 @@
             const modeDuration = ghost.mode === 'scatter' ?
                 CONFIG.GHOST_MODES.SCATTER_DURATION : CONFIG.GHOST_MODES.CHASE_DURATION;
             if (ghost.modeTimer > modeDuration) {
-                ghost.mode = ghost.mode === 'scatter' ? 'chase' : 'scatter';
+                ghost.mode = (ghost.mode === 'scatter') ? 'chase' : 'scatter';
                 ghost.modeTimer = 0;
             }
             let targetX, targetY;
@@ -324,8 +335,8 @@
                         break;
                     case 3:
                         const dist = Utils.distance(ghost.x, ghost.y, pacX, pacY);
-                        targetX = dist > 8 * CONFIG.TILE_SIZE ? pacX : 2 * CONFIG.TILE_SIZE;
-                        targetY = dist > 8 * CONFIG.TILE_SIZE ? pacY : 30 * CONFIG.TILE_SIZE;
+                        targetX = (dist > 8 * CONFIG.TILE_SIZE) ? pacX : 2 * CONFIG.TILE_SIZE;
+                        targetY = (dist > 8 * CONFIG.TILE_SIZE) ? pacY : 30 * CONFIG.TILE_SIZE;
                         break;
                 }
             }
@@ -355,8 +366,9 @@
             }
             let newX = pac.x + Math.cos(pac.direction) * speed;
             let newY = pac.y + Math.sin(pac.direction) * speed;
+            // Tunnel wrap-around horizontally
             if (newX < 0) newX = CONFIG.CANVAS_WIDTH + newX;
-            if (newX > CONFIG.CANVAS_WIDTH) newX = newX - CONFIG.CANVAS_WIDTH;
+            if (newX >= CONFIG.CANVAS_WIDTH) newX = newX - CONFIG.CANVAS_WIDTH;
             if (this.canMove(newX, newY, pac.radius)) {
                 pac.x = newX;
                 pac.y = newY;
@@ -393,7 +405,7 @@
                 let ghostX = ghost.x + Math.cos(ghost.direction) * ghostSpeed * (delta / 16);
                 let ghostY = ghost.y + Math.sin(ghost.direction) * ghostSpeed * (delta / 16);
                 if (ghostX < 0) ghostX = CONFIG.CANVAS_WIDTH + ghostX;
-                if (ghostX > CONFIG.CANVAS_WIDTH) ghostX = ghostX - CONFIG.CANVAS_WIDTH;
+                if (ghostX >= CONFIG.CANVAS_WIDTH) ghostX = ghostX - CONFIG.CANVAS_WIDTH;
                 if (this.canMove(ghostX, ghostY, 7)) {
                     ghost.x = ghostX;
                     ghost.y = ghostY;
@@ -427,11 +439,13 @@
 
         render(timestamp) {
             const pac = this.entities.pacman;
+            // Draw a gradient background for a modern look
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
             gradient.addColorStop(0, '#000022');
             gradient.addColorStop(1, '#222255');
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Draw maze walls
             ctx.fillStyle = CONFIG.COLORS.WALL;
             for (let y = 0; y < this.maze.length; y++) {
                 for (let x = 0; x < this.maze[y].length; x++) {
@@ -441,6 +455,7 @@
                     }
                 }
             }
+            // Draw pellets and power-ups
             ctx.fillStyle = CONFIG.COLORS.TEXT;
             this.entities.dots.forEach(dot => {
                 ctx.beginPath();
@@ -452,8 +467,8 @@
                 ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
                 ctx.fill();
             });
-            ctx.fillStyle = pac.powerMode ?
-                `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
+            // Draw Pac-Man with animated mouth
+            ctx.fillStyle = pac.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
             pac.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
             ctx.beginPath();
             ctx.arc(pac.x, pac.y, pac.radius,
@@ -461,6 +476,7 @@
                     pac.direction + 2 * Math.PI - pac.mouthAngle);
             ctx.lineTo(pac.x, pac.y);
             ctx.fill();
+            // Draw ghosts with simple eyes
             this.entities.ghosts.forEach(ghost => {
                 ctx.fillStyle = ghost.frightened ? CONFIG.COLORS.FRIGHTENED : ghost.color;
                 ctx.beginPath();
@@ -476,6 +492,7 @@
                 ctx.arc(ghost.x + 3, ghost.y - 2, 2, 0, Math.PI * 2);
                 ctx.fill();
             });
+            // Draw HUD with drop shadow for style
             ctx.save();
             ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
             ctx.shadowBlur = 4;
@@ -487,8 +504,8 @@
             ctx.restore();
             if (this.state !== 'playing') {
                 ctx.font = '32px Segoe UI, Tahoma, sans-serif';
-                const msg = this.state === 'win' ? 'You Win!' : 'Game Over';
-                ctx.fillText(msg, canvas.width/2 - 80, canvas.height/2);
+                const msg = (this.state === 'win') ? 'You Win!' : 'Game Over';
+                ctx.fillText(msg, canvas.width / 2 - 80, canvas.height / 2);
             }
         }
 
@@ -497,9 +514,7 @@
                 const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
                 this.lastTime = timestamp;
                 try {
-                    if (this.state === 'playing') {
-                        this.update(delta);
-                    }
+                    if (this.state === 'playing') this.update(delta);
                     this.render(timestamp);
                     requestAnimationFrame(loop);
                 } catch (error) {
@@ -507,7 +522,7 @@
                     this.state = 'error';
                     ctx.fillStyle = CONFIG.COLORS.TEXT;
                     ctx.font = '20px Arial';
-                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height/2);
+                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
                 }
             };
             requestAnimationFrame(loop);
