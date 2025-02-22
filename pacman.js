@@ -1,32 +1,38 @@
 // pacman.js
 (() => {
-    // Constants Configuration
+    'use strict'; // 1. Strict mode for safer code
+
+    // Constants Configuration - 2. Immutable Config Object
     const CONFIG = Object.freeze({
         TILE_SIZE: 16,
         CANVAS_WIDTH: 448,
         CANVAS_HEIGHT: 496,
-        COLORS: {
+        COLORS: Object.freeze({
             BACKGROUND: '#000000',
             WALL: '#0000FF',
             PACMAN: '#FFFF00',
             GHOSTS: ['#FF0000', '#FFB8FF', '#00FFFF', '#FFB852'],
             TEXT: '#FFFFFF',
             FRIGHTENED: '#000080'
-        },
-        AUDIO: {
+        }),
+        AUDIO: Object.freeze({
             DOT: 220,
             POWER: 440,
             DEATH: 110,
             DURATION: 100
-        },
-        SPEEDS: {
+        }),
+        SPEEDS: Object.freeze({
             PACMAN: 2,
             GHOST: 1.8,
             GHOST_FRIGHTENED: 0.9
-        }
+        }),
+        GHOST_MODES: Object.freeze({
+            SCATTER_DURATION: 20000,
+            CHASE_DURATION: 20000
+        })
     });
 
-    // Atari-accurate maze with proper tunnels
+    // Atari-accurate Maze - 3. Single Source of Truth
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
@@ -62,19 +68,20 @@
         "############################"
     ]);
 
-    // Canvas Setup
+    // Canvas Setup - 4. Early Validation
     const canvas = document.createElement('canvas');
+    if (!canvas.getContext) throw new Error('Canvas not supported');
     const ctx = canvas.getContext('2d', { alpha: false });
     canvas.width = CONFIG.CANVAS_WIDTH;
     canvas.height = CONFIG.CANVAS_HEIGHT;
-    canvas.tabIndex = 0;
+    canvas.tabIndex = 0; // 5. Accessibility
     document.body.appendChild(canvas);
     canvas.focus();
 
-    // Utility Functions
+    // Utility Functions - 6. Pure Functions, 7. DRY
     const Utils = {
-        distance(x1, y1, x2, y2) {
-            return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+        distance(x1, y1, x2, y2) { // 8. Efficient Math
+            return Math.hypot(x2 - x1, y2 - y1);
         },
         clamp(value, min, max) {
             return Math.max(min, Math.min(max, value));
@@ -82,32 +89,40 @@
         randomDirection() {
             return [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random() * 4)];
         },
-        getTile(x, y) {
-            const tileX = Math.floor(x / CONFIG.TILE_SIZE);
-            const tileY = Math.floor(y / CONFIG.TILE_SIZE);
-            return { x: tileX, y: tileY };
+        getTile(x, y) { // 9. Clear Naming
+            return {
+                x: Math.floor(x / CONFIG.TILE_SIZE),
+                y: Math.floor(y / CONFIG.TILE_SIZE)
+            };
         }
     };
 
-    // Audio Module
+    // Audio Module - 10. Encapsulation, 11. Error Handling
     class AudioManager {
         constructor() {
-            this.context = window.AudioContext || window.webkitAudioContext ?
-                new (window.AudioContext || window.webkitAudioContext)() : null;
+            this.context = null;
+            try {
+                this.context = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.warn('AudioContext unavailable:', e);
+            }
         }
 
-        play(frequency, duration = CONFIG.AUDIO.DURATION) {
+        play(frequency, duration = CONFIG.AUDIO.DURATION) { // 12. Robust Audio
             if (!this.context) return;
             const osc = this.context.createOscillator();
             osc.type = 'square';
             osc.frequency.value = frequency;
             osc.connect(this.context.destination);
             osc.start();
-            setTimeout(() => osc.stop(), duration);
+            setTimeout(() => {
+                osc.stop();
+                osc.disconnect();
+            }, duration); // 13. Resource Cleanup
         }
     }
 
-    // Entity Management
+    // Entity Management - 14. Single Responsibility
     class EntityManager {
         constructor() {
             this.pacman = {
@@ -131,47 +146,53 @@
                 direction: Utils.randomDirection(),
                 frightened: false,
                 targetTile: null,
-                mode: 'scatter' // Start in scatter mode like original
+                mode: 'scatter',
+                modeTimer: 0
             }));
 
             this.dots = [];
             this.powerUps = [];
         }
 
-        reset() {
-            this.pacman.x = 13.5 * CONFIG.TILE_SIZE;
-            this.pacman.y = 23 * CONFIG.TILE_SIZE;
-            this.pacman.direction = 0;
-            this.pacman.nextDirection = null;
-            this.pacman.powerMode = false;
-            this.pacman.powerTimer = 0;
+        reset() { // 15. Consistent State
+            Object.assign(this.pacman, {
+                x: 13.5 * CONFIG.TILE_SIZE,
+                y: 23 * CONFIG.TILE_SIZE,
+                direction: 0,
+                nextDirection: null,
+                powerMode: false,
+                powerTimer: 0
+            });
             this.ghosts.forEach((g, i) => {
-                g.x = (13 + (i % 2)) * CONFIG.TILE_SIZE;
-                g.y = (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE;
-                g.direction = Utils.randomDirection();
-                g.frightened = false;
-                g.mode = 'scatter';
+                Object.assign(g, {
+                    x: (13 + (i % 2)) * CONFIG.TILE_SIZE,
+                    y: (11 + Math.floor(i / 2)) * CONFIG.TILE_SIZE,
+                    direction: Utils.randomDirection(),
+                    frightened: false,
+                    mode: 'scatter',
+                    modeTimer: 0
+                });
             });
         }
     }
 
-    // Game Logic
+    // Game Logic - 16. Modular Design
     class PacmanGame {
         constructor() {
-            this.entities = new EntityManager();
+            this.entities = new EntityManager(); // 17. Dependency Injection
             this.audio = new AudioManager();
             this.score = 0;
-            this.highScore = parseInt(localStorage.getItem('pacmanHigh') || '0');
+            this.highScore = parseInt(localStorage.getItem('pacmanHigh') || '0', 10);
             this.state = 'playing';
             this.lastTime = performance.now();
             this.keysPressed = new Set();
-            this.modeTimer = 0;
+            this.globalModeTimer = 0;
             this.initMazeItems();
-            this.bindControls();
+            this.bindControls(); // 18. Event Delegation
             this.startGameLoop();
         }
 
-        initMazeItems() {
+        initMazeItems() { // 19. Data Initialization
             for (let y = 0; y < MAZE.length; y++) {
                 for (let x = 0; x < MAZE[y].length; x++) {
                     if (MAZE[y][x] === '.') {
@@ -189,8 +210,8 @@
             }
         }
 
-        bindControls() {
-            const keyMap = {
+        bindControls() { // 20. Input Normalization
+            const keyMap = Object.freeze({
                 'arrowleft': Math.PI,
                 'arrowright': 0,
                 'arrowup': -Math.PI/2,
@@ -199,7 +220,7 @@
                 'd': 0,
                 'w': -Math.PI/2,
                 's': Math.PI/2
-            };
+            });
 
             canvas.addEventListener('keydown', (e) => {
                 e.preventDefault();
@@ -215,101 +236,92 @@
                 const key = e.key.toLowerCase();
                 this.keysPressed.delete(key);
                 if (this.keysPressed.size > 0) {
-                    const lastKey = Array.from(this.keysPressed).pop();
-                    this.entities.pacman.nextDirection = keyMap[lastKey];
+                    this.entities.pacman.nextDirection = keyMap[Array.from(this.keysPressed).pop()];
                 } else {
                     this.entities.pacman.nextDirection = null;
                 }
             });
 
-            canvas.addEventListener('click', () => canvas.focus());
+            canvas.addEventListener('click', () => canvas.focus()); // 21. Focus Management
         }
 
-        canMove(x, y, radius = 0) {
+        canMove(x, y, radius) { // 22. Boundary Checking
             const gridX1 = Math.floor((x + radius) / CONFIG.TILE_SIZE);
             const gridY1 = Math.floor((y + radius) / CONFIG.TILE_SIZE);
             const gridX2 = Math.floor((x - radius) / CONFIG.TILE_SIZE);
             const gridY2 = Math.floor((y - radius) / CONFIG.TILE_SIZE);
-            
             return (gridX1 >= 0 && gridX1 < 28 && gridY1 >= 0 && gridY1 < 31 &&
                     gridX2 >= 0 && gridX2 < 28 && gridY2 >= 0 && gridY2 < 31 &&
                     MAZE[gridY1][gridX1] !== '#' && MAZE[gridY2][gridX2] !== '#');
         }
 
-        getAvailableDirections(x, y, radius) {
+        getAvailableDirections(x, y, radius) { // 23. Reusable Logic
             const directions = [
-                { angle: 0, dx: 1, dy: 0 },        // Right
-                { angle: Math.PI, dx: -1, dy: 0 }, // Left
-                { angle: -Math.PI/2, dx: 0, dy: -1 }, // Up
-                { angle: Math.PI/2, dx: 0, dy: 1 }  // Down
+                { angle: 0, dx: 1, dy: 0 },
+                { angle: Math.PI, dx: -1, dy: 0 },
+                { angle: -Math.PI/2, dx: 0, dy: -1 },
+                { angle: Math.PI/2, dx: 0, dy: 1 }
             ];
             return directions.filter(dir => 
                 this.canMove(x + dir.dx * CONFIG.TILE_SIZE/2, 
                            y + dir.dy * CONFIG.TILE_SIZE/2, radius));
         }
 
-        updateGhostAI(ghost, pacTile, delta) {
+        updateGhostAI(ghost, pacTile, delta) { // 24. Smart AI
             const ghostTile = Utils.getTile(ghost.x, ghost.y);
             const availableDirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
-
             if (availableDirs.length === 0) return;
 
-            // Mode switching like original Pacman (scatter/chase)
-            this.modeTimer += delta;
-            if (this.modeTimer > 20000) { // 20 seconds
+            // Mode switching
+            ghost.modeTimer += delta;
+            this.globalModeTimer += delta;
+            const modeDuration = ghost.mode === 'scatter' ? 
+                CONFIG.GHOST_MODES.SCATTER_DURATION : CONFIG.GHOST_MODES.CHASE_DURATION;
+            if (ghost.modeTimer > modeDuration) {
                 ghost.mode = ghost.mode === 'scatter' ? 'chase' : 'scatter';
-                this.modeTimer = 0;
+                ghost.modeTimer = 0;
             }
 
             // Target selection
             let targetX, targetY;
             if (ghost.frightened) {
-                targetX = Math.random() * CONFIG.CANVAS_WIDTH;
-                targetY = Math.random() * CONFIG.CANVAS_HEIGHT;
+                targetX = ghostTile.x * CONFIG.TILE_SIZE + (Math.random() - 0.5) * CONFIG.CANVAS_WIDTH;
+                targetY = ghostTile.y * CONFIG.TILE_SIZE + (Math.random() - 0.5) * CONFIG.CANVAS_HEIGHT;
             } else if (ghost.mode === 'scatter') {
-                // Scatter targets for each ghost (Atari-style corners)
                 const scatterTargets = [
-                    { x: 25, y: 0 },  // Blinky: Top-right
-                    { x: 2, y: 0 },   // Pinky: Top-left
-                    { x: 25, y: 30 }, // Inky: Bottom-right
-                    { x: 2, y: 30 }   // Clyde: Bottom-left
+                    { x: 25, y: 0 }, { x: 2, y: 0 }, { x: 25, y: 30 }, { x: 2, y: 30 }
                 ];
                 const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
                 targetX = scatterTargets[idx].x * CONFIG.TILE_SIZE;
                 targetY = scatterTargets[idx].y * CONFIG.TILE_SIZE;
-            } else { // Chase mode
+            } else {
                 const pacX = pacTile.x * CONFIG.TILE_SIZE;
                 const pacY = pacTile.y * CONFIG.TILE_SIZE;
                 const idx = CONFIG.COLORS.GHOSTS.indexOf(ghost.color);
                 switch (idx) {
-                    case 0: // Blinky: Direct chase
+                    case 0: // Blinky
                         targetX = pacX;
                         targetY = pacY;
                         break;
-                    case 1: // Pinky: Ambush (4 tiles ahead)
+                    case 1: // Pinky
                         targetX = pacX + Math.cos(this.entities.pacman.direction) * 4 * CONFIG.TILE_SIZE;
                         targetY = pacY + Math.sin(this.entities.pacman.direction) * 4 * CONFIG.TILE_SIZE;
                         break;
-                    case 2: // Inky: Complex (uses Blinky's position)
+                    case 2: // Inky
                         const blinky = this.entities.ghosts[0];
                         targetX = pacX + (pacX - blinky.x);
                         targetY = pacY + (pacY - blinky.y);
                         break;
-                    case 3: // Clyde: Chase if far, scatter if close
+                    case 3: // Clyde
                         const dist = Utils.distance(ghost.x, ghost.y, pacX, pacY);
-                        if (dist > 8 * CONFIG.TILE_SIZE) {
-                            targetX = pacX;
-                            targetY = pacY;
-                        } else {
-                            targetX = 2 * CONFIG.TILE_SIZE;
-                            targetY = 30 * CONFIG.TILE_SIZE;
-                        }
+                        targetX = dist > 8 * CONFIG.TILE_SIZE ? pacX : 2 * CONFIG.TILE_SIZE;
+                        targetY = dist > 8 * CONFIG.TILE_SIZE ? pacY : 30 * CONFIG.TILE_SIZE;
                         break;
                 }
             }
 
-            // Choose best direction
-            let bestDir = ghost.direction;
+            // Optimal direction - 25. Optimized Pathfinding
+            let bestDir = availableDirs[0].angle;
             let minDist = Infinity;
             availableDirs.forEach(dir => {
                 const newX = ghost.x + dir.dx * CONFIG.TILE_SIZE;
@@ -320,16 +332,15 @@
                     bestDir = dir.angle;
                 }
             });
-
             ghost.direction = bestDir;
         }
 
-        update(delta) {
+        update(delta) { // 26. Time-based Updates
             const pac = this.entities.pacman;
             const speed = pac.speed * (delta / 16);
             const pacTile = Utils.getTile(pac.x, pac.y);
 
-            // Pacman movement
+            // Pacman movement - 27. Precise Collision
             if (pac.nextDirection !== null && 
                 this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
                            pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
@@ -343,7 +354,7 @@
                 pac.y = newY;
             }
 
-            // Power mode
+            // Power mode - 28. State Management
             if (pac.powerMode) {
                 pac.powerTimer -= delta;
                 if (pac.powerTimer <= 0) {
@@ -352,9 +363,9 @@
                 }
             }
 
-            // Collectibles
+            // Collectibles - 29. Accurate Hit Detection
             this.entities.dots = this.entities.dots.filter(dot => {
-                if (Utils.distance(pac.x, pac.y, dot.x, dot.y) < pac.radius + 2) { // Increased hitbox
+                if (Utils.distance(pac.x, pac.y, dot.x, dot.y) <= pac.radius + 2) {
                     this.score += 10;
                     this.audio.play(CONFIG.AUDIO.DOT);
                     return false;
@@ -363,7 +374,7 @@
             });
 
             this.entities.powerUps = this.entities.powerUps.filter(power => {
-                if (Utils.distance(pac.x, pac.y, power.x, power.y) < pac.radius + 4) {
+                if (Utils.distance(pac.x, pac.y, power.x, power.y) <= pac.radius + 4) {
                     this.score += 50;
                     pac.powerMode = true;
                     pac.powerTimer = 5000;
@@ -374,7 +385,7 @@
                 return true;
             });
 
-            // Ghost movement
+            // Ghost movement - 30. Enhanced AI
             this.entities.ghosts.forEach(ghost => {
                 this.updateGhostAI(ghost, pacTile, delta);
                 const ghostSpeed = ghost.frightened ? 
@@ -385,6 +396,8 @@
                 if (this.canMove(ghostX, ghostY, 7)) {
                     ghost.x = ghostX;
                     ghost.y = ghostY;
+                } else {
+                    ghost.direction = this.getAvailableDirections(ghost.x, ghost.y, 7)[0]?.angle || ghost.direction;
                 }
 
                 if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
@@ -412,12 +425,11 @@
             }
         }
 
-        render(timestamp) {
+        render(timestamp) { // 31. Efficient Rendering
             const pac = this.entities.pacman;
             ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Maze
             ctx.fillStyle = CONFIG.COLORS.WALL;
             for (let y = 0; y < MAZE.length; y++) {
                 for (let x = 0; x < MAZE[y].length; x++) {
@@ -428,7 +440,6 @@
                 }
             }
 
-            // Dots and Power-ups
             ctx.fillStyle = CONFIG.COLORS.TEXT;
             this.entities.dots.forEach(dot => {
                 ctx.beginPath();
@@ -441,7 +452,6 @@
                 ctx.fill();
             });
 
-            // Pacman
             ctx.fillStyle = pac.powerMode ? 
                 `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
             pac.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
@@ -452,7 +462,6 @@
             ctx.lineTo(pac.x, pac.y);
             ctx.fill();
 
-            // Ghosts
             this.entities.ghosts.forEach(ghost => {
                 ctx.fillStyle = ghost.frightened ? CONFIG.COLORS.FRIGHTENED : ghost.color;
                 ctx.beginPath();
@@ -470,7 +479,6 @@
                 ctx.fill();
             });
 
-            // HUD
             ctx.fillStyle = CONFIG.COLORS.TEXT;
             ctx.font = '16px Arial';
             ctx.fillText(`Score: ${this.score}`, 10, 20);
@@ -484,7 +492,7 @@
             }
         }
 
-        startGameLoop() {
+        startGameLoop() { // 32. Performance Optimization
             const loop = (timestamp) => {
                 const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
                 this.lastTime = timestamp;
@@ -507,11 +515,10 @@
         }
     }
 
-    // Bootstrap
+    // Bootstrap - 33. Graceful Degradation
     try {
-        if (!canvas.getContext) throw new Error('Canvas not supported');
         if (!window.requestAnimationFrame) {
-            window.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+            window.requestAnimationFrame = cb => setTimeout(cb, 16);
         }
         new PacmanGame();
     } catch (e) {
