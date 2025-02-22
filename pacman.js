@@ -13,37 +13,34 @@
             TEXT: '#FFFFFF',
             FRIGHTENED: '#000080'
         },
-        AUDIO: {
-            DOT: 220,
-            POWER: 440,
-            DEATH: 110,
-            DURATION: 100
-        },
         SPEEDS: {
             PACMAN: 2.5,
             GHOST: 2
         },
-        POWER_DURATION: 5000
+        POWER_DURATION: 5000,
+        MODE_SWITCH_INTERVAL: 7000,
+        VERSION: 'v2.0'
     });
 
+    // Classic PAC-MAN Maze Layout
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
         "#.####.#####.##.#####.####.#",
-        "#o####.#####.##.#####.####o#",
-        "#.####.#####.##.#####.####.#",
-        "#..........................#",
-        "#.####.##.########.##.####.#",
-        "#.####.##.########.##.####.#",
-        "#......##....##....##......#",
-        "######.##### ## #####.######",
-        "     #.##### ## #####.#     ",
-        "     #.##    @     ##.#     ",
+        "#o##.##.#####.##.#####.##o##",
+        "#.##.##.#####.##.#####.##.##",
+        "#.............##.............#",
+        "#.####.#####.##.#####.####.##",
+        "#.####.#####.##.#####.####.##",
+        "#......##....##....##......##",
+        "######.#####.##.#####.######",
+        "     #.#####.##.#####.#     ",
+        "     #.##          ##.#     ",
         "     #.## ###==### ##.#     ",
         "######.## #      # ##.######",
         "      .   #      #   .      ",
         "######.## #      # ##.######",
-        "#.....## ########## ##.....#",
+        "     #.## ########## ##.#     ",
         "#.####.## ########## ##.####.#",
         "#.####.##            ##.####.#",
         "#......## ########## ##......#",
@@ -62,13 +59,22 @@
     ]);
 
     // Canvas Setup
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { alpha: false });
-    canvas.width = CONFIG.CANVAS_WIDTH;
-    canvas.height = CONFIG.CANVAS_HEIGHT;
-    canvas.tabIndex = 0;
-    document.body.appendChild(canvas);
-    canvas.focus();
+    let canvas = null;
+    let ctx = null;
+    try {
+        canvas = document.createElement('canvas');
+        ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) throw new Error('Canvas 2D context not supported');
+        canvas.width = CONFIG.CANVAS_WIDTH;
+        canvas.height = CONFIG.CANVAS_HEIGHT;
+        canvas.tabIndex = 0;
+        document.body.appendChild(canvas);
+        canvas.focus();
+    } catch (e) {
+        console.error('Canvas initialization failed:', e);
+        document.body.textContent = 'PAC-MAN failed to start: Canvas not supported.';
+        return;
+    }
 
     // Utilities
     const Utils = {
@@ -79,21 +85,29 @@
             return Math.max(min, Math.min(max, value));
         },
         randomDirection() {
-            return [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random() * 4)];
+            return [0, Math.PI / 2, Math.PI, -Math.PI / 2][Math.floor(Math.random() * 4)];
         },
         tileToPixel(tile) {
             return tile * CONFIG.TILE_SIZE;
+        },
+        pixelToTile(pixel) {
+            return Math.floor(pixel / CONFIG.TILE_SIZE);
         }
     };
 
     // Audio Manager
     class AudioManager {
         constructor() {
-            this.context = window.AudioContext || window.webkitAudioContext ?
-                new (window.AudioContext || window.webkitAudioContext)() : null;
+            this.context = null;
+            try {
+                this.context = window.AudioContext || window.webkitAudioContext ?
+                    new (window.AudioContext || window.webkitAudioContext)() : null;
+            } catch (e) {
+                console.warn('Web Audio API not supported:', e);
+            }
         }
 
-        play(frequency, duration = CONFIG.AUDIO.DURATION) {
+        play(frequency, duration = 100) {
             if (!this.context) return;
             try {
                 const osc = this.context.createOscillator();
@@ -103,88 +117,243 @@
                 osc.start();
                 osc.stop(this.context.currentTime + duration / 1000);
             } catch (e) {
-                console.warn('Audio error:', e);
+                console.warn('Audio playback failed:', e);
             }
         }
     }
 
-    // Entity Manager
-    class EntityManager {
+    // Maze Module
+    class Maze {
         constructor() {
-            this.pacman = {
-                x: Utils.tileToPixel(13.5),
-                y: Utils.tileToPixel(23),
-                speed: CONFIG.SPEEDS.PACMAN,
-                direction: 0,
-                nextDirection: 0,
-                radius: 7,
-                mouthAngle: 0,
-                lives: 3,
-                powerMode: false,
-                powerTimer: 0
-            };
-
-            this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => ({
-                x: Utils.tileToPixel(13 + (i % 2)),
-                y: Utils.tileToPixel(11 + Math.floor(i / 2)),
-                color,
-                speed: CONFIG.SPEEDS.GHOST,
-                direction: Utils.randomDirection(),
-                mode: 'scatter',
-                modeTimer: 0
-            }));
-
+            this.width = 28;
+            this.height = 31;
             this.dots = [];
             this.powerUps = [];
+            this.initItems();
         }
 
-        reset() {
-            this.pacman.x = Utils.tileToPixel(13.5);
-            this.pacman.y = Utils.tileToPixel(23);
-            this.pacman.direction = 0;
-            this.pacman.nextDirection = 0;
-            this.pacman.powerMode = false;
-            this.pacman.powerTimer = 0;
-            this.ghosts.forEach((g, i) => {
-                g.x = Utils.tileToPixel(13 + (i % 2));
-                g.y = Utils.tileToPixel(11 + Math.floor(i / 2));
-                g.direction = Utils.randomDirection();
-                g.mode = 'scatter';
-                g.modeTimer = 0;
+        initItems() {
+            for (let y = 0; y < MAZE.length; y++) {
+                for (let x = 0; x < MAZE[y].length; x++) {
+                    if (MAZE[y][x] === '.') {
+                        this.dots.push({ x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE / 2, y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE / 2 });
+                    } else if (MAZE[y][x] === 'o') {
+                        this.powerUps.push({ x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE / 2, y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE / 2 });
+                    }
+                }
+            }
+        }
+
+        render(ctx) {
+            ctx.fillStyle = CONFIG.COLORS.WALL;
+            for (let y = 0; y < MAZE.length; y++) {
+                for (let x = 0; x < MAZE[y].length; x++) {
+                    if (MAZE[y][x] === '#') {
+                        ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                    }
+                }
+            }
+            ctx.fillStyle = CONFIG.COLORS.TEXT;
+            this.dots.forEach(dot => {
+                ctx.beginPath();
+                ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
+                ctx.fill();
             });
+            this.powerUps.forEach(power => {
+                ctx.beginPath();
+                ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        canMove(x, y, radius) {
+            let gridX = Utils.pixelToTile(x);
+            let gridY = Utils.pixelToTile(y);
+            if (gridX < 0) gridX = this.width - 1;
+            if (gridX >= this.width) gridX = 0;
+            if (gridY < 0 || gridY >= this.height) return false;
+            return MAZE[gridY][gridX] !== '#';
+        }
+
+        wrapAround(x, y) {
+            if (x < 0) x = CONFIG.CANVAS_WIDTH - CONFIG.TILE_SIZE;
+            if (x >= CONFIG.CANVAS_WIDTH) x = 0;
+            if (y < 0 || y >= CONFIG.CANVAS_HEIGHT) y = Math.max(0, Math.min(y, CONFIG.CANVAS_HEIGHT - CONFIG.TILE_SIZE));
+            return { x, y };
         }
     }
 
-    // Game Logic
-    class PacmanGame {
+    // Pacman Module
+    class Pacman {
         constructor() {
-            this.entities = new EntityManager();
+            this.x = Utils.tileToPixel(13.5);
+            this.y = Utils.tileToPixel(23);
+            this.speed = CONFIG.SPEEDS.PACMAN;
+            this.direction = 0;
+            this.nextDirection = 0;
+            this.radius = 7;
+            this.mouthAngle = 0;
+            this.lives = 3;
+            this.powerMode = false;
+            this.powerTimer = 0;
+        }
+
+        move(delta, maze) {
+            const speed = this.speed * delta / 16;
+            let newX = this.x + Math.cos(this.direction) * speed;
+            let newY = this.y + Math.sin(this.direction) * speed;
+            let wrapped = maze.wrapAround(newX, newY);
+            newX = wrapped.x;
+            newY = wrapped.y;
+
+            if (maze.canMove(newX, newY, this.radius)) {
+                this.x = newX;
+                this.y = newY;
+            }
+
+            let nextX = this.x + Math.cos(this.nextDirection) * speed;
+            let nextY = this.y + Math.sin(this.nextDirection) * speed;
+            wrapped = maze.wrapAround(nextX, nextY);
+            nextX = wrapped.x;
+            nextY = wrapped.y;
+
+            if (maze.canMove(nextX, nextY, this.radius)) {
+                this.direction = this.nextDirection;
+            }
+        }
+
+        render(ctx, timestamp) {
+            ctx.fillStyle = this.powerMode ? `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
+            this.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, this.direction + this.mouthAngle, this.direction + 2 * Math.PI - this.mouthAngle);
+            ctx.lineTo(this.x, this.y);
+            ctx.fill();
+        }
+
+        reset() {
+            this.x = Utils.tileToPixel(13.5);
+            this.y = Utils.tileToPixel(23);
+            this.direction = 0;
+            this.nextDirection = 0;
+            this.powerMode = false;
+            this.powerTimer = 0;
+        }
+    }
+
+    // Ghost Module
+    class Ghost {
+        constructor(color, startX, startY) {
+            this.x = startX;
+            this.y = startY;
+            this.color = color;
+            this.speed = CONFIG.SPEEDS.GHOST;
+            this.direction = Utils.randomDirection();
+            this.mode = 'scatter';
+            this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
+        }
+
+        move(delta, pacman, maze) {
+            this.modeTimer -= delta;
+            if (this.modeTimer <= 0) {
+                this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
+                this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
+            }
+
+            let targetAngle;
+            if (pacman.powerMode) {
+                targetAngle = Utils.randomDirection(); // Flee
+            } else if (this.mode === 'chase') {
+                const dx = pacman.x - this.x;
+                const dy = pacman.y - this.y;
+                targetAngle = Math.atan2(dy, dx);
+            } else {
+                targetAngle = Utils.randomDirection(); // Scatter
+            }
+
+            const speed = this.speed * delta / 16;
+            let newX = this.x + Math.cos(targetAngle) * speed;
+            let newY = this.y + Math.sin(targetAngle) * speed;
+            let wrapped = maze.wrapAround(newX, newY);
+            newX = wrapped.x;
+            newY = wrapped.y;
+
+            if (maze.canMove(newX, newY, 7)) {
+                this.x = newX;
+                this.y = newY;
+                this.direction = targetAngle;
+            } else {
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    this.direction = Utils.randomDirection();
+                    newX = this.x + Math.cos(this.direction) * speed;
+                    newY = this.y + Math.sin(this.direction) * speed;
+                    wrapped = maze.wrapAround(newX, newY);
+                    newX = wrapped.x;
+                    newY = wrapped.y;
+                    if (maze.canMove(newX, newY, 7)) {
+                        this.x = newX;
+                        this.y = newY;
+                        break;
+                    }
+                }
+            }
+        }
+
+        render(ctx, pacman) {
+            ctx.fillStyle = pacman.powerMode ? CONFIG.COLORS.FRIGHTENED : this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 7, 0, Math.PI);
+            ctx.lineTo(this.x + 7, this.y + 7);
+            for (let i = 5; i >= -5; i -= 2) {
+                ctx.lineTo(this.x + i, this.y + (Math.abs(i) === 5 ? 7 : 5));
+            }
+            ctx.fill();
+            ctx.fillStyle = CONFIG.COLORS.TEXT;
+            ctx.beginPath();
+            ctx.arc(this.x - 3, this.y - 2, 2, 0, Math.PI * 2);
+            ctx.arc(this.x + 3, this.y - 2, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        reset() {
+            this.x = Utils.tileToPixel(13.5);
+            this.y = Utils.tileToPixel(11);
+            this.direction = Utils.randomDirection();
+            this.mode = 'scatter';
+            this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
+        }
+    }
+
+    // Game Module
+    class Game {
+        constructor() {
+            this.maze = new Maze();
+            this.pacman = new Pacman();
+            this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => new Ghost(color, Utils.tileToPixel(13 + (i % 2)), Utils.tileToPixel(11 + Math.floor(i / 2))));
             this.audio = new AudioManager();
             this.score = 0;
-            this.highScore = parseInt(localStorage.getItem('pacmanHigh') || '0');
+            this.highScore = this.getHighScore() || 0;
             this.state = 'playing';
             this.lastTime = 0;
             this.keysPressed = new Set();
-            this.initMazeItems();
             this.bindControls();
             this.startGameLoop();
         }
 
-        initMazeItems() {
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '.') {
-                        this.entities.dots.push({
-                            x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE/2,
-                            y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE/2
-                        });
-                    } else if (MAZE[y][x] === 'o') {
-                        this.entities.powerUps.push({
-                            x: Utils.tileToPixel(x) + CONFIG.TILE_SIZE/2,
-                            y: Utils.tileToPixel(y) + CONFIG.TILE_SIZE/2
-                        });
-                    }
-                }
+        getHighScore() {
+            try {
+                return parseInt(localStorage.getItem('pacmanHigh') || '0');
+            } catch (e) {
+                console.warn('LocalStorage access failed:', e);
+                return 0;
+            }
+        }
+
+        setHighScore(score) {
+            try {
+                localStorage.setItem('pacmanHigh', score);
+            } catch (e) {
+                console.warn('Failed to save high score:', e);
             }
         }
 
@@ -192,12 +361,12 @@
             const keyMap = {
                 'arrowleft': Math.PI,
                 'arrowright': 0,
-                'arrowup': -Math.PI/2,
-                'arrowdown': Math.PI/2,
+                'arrowup': -Math.PI / 2,
+                'arrowdown': Math.PI / 2,
                 'a': Math.PI,
                 'd': 0,
-                'w': -Math.PI/2,
-                's': Math.PI/2
+                'w': -Math.PI / 2,
+                's': Math.PI / 2
             };
 
             canvas.addEventListener('keydown', (e) => {
@@ -205,8 +374,7 @@
                 const key = e.key.toLowerCase();
                 if (keyMap[key]) {
                     this.keysPressed.add(key);
-                    this.entities.pacman.nextDirection = keyMap[key];
-                    console.log('Key down:', key, 'Direction:', this.entities.pacman.nextDirection);
+                    this.pacman.nextDirection = keyMap[key];
                 }
             });
 
@@ -216,202 +384,106 @@
                 this.keysPressed.delete(key);
                 if (this.keysPressed.size > 0) {
                     const lastKey = Array.from(this.keysPressed).pop();
-                    this.entities.pacman.nextDirection = keyMap[lastKey];
-                    console.log('Key up, new direction:', this.entities.pacman.nextDirection);
+                    this.pacman.nextDirection = keyMap[lastKey];
+                } else {
+                    this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
                 }
             });
 
             canvas.addEventListener('click', () => {
                 canvas.focus();
-                console.log('Canvas focused');
             });
-        }
-
-        canMove(x, y, radius) {
-            const gridX = Math.floor((x + radius) / CONFIG.TILE_SIZE);
-            const gridY = Math.floor((y + radius) / CONFIG.TILE_SIZE);
-            const gridX2 = Math.floor((x - radius) / CONFIG.TILE_SIZE);
-            const gridY2 = Math.floor((y - radius) / CONFIG.TILE_SIZE);
-
-            return (gridX >= 0 && gridX < 28 && gridY >= 0 && gridY < 31 &&
-                    gridX2 >= 0 && gridX2 < 28 && gridY2 >= 0 && gridY2 < 31 &&
-                    MAZE[gridY][gridX] !== '#' && MAZE[gridY2][gridX2] !== '#');
-        }
-
-        updateGhostAI(ghost, pacman, delta) {
-            ghost.modeTimer -= delta;
-            if (ghost.modeTimer <= 0) {
-                ghost.mode = ghost.mode === 'scatter' ? 'chase' : 'scatter';
-                ghost.modeTimer = 7000; // Switch every 7 seconds
-            }
-
-            const dx = pacman.x - ghost.x;
-            const dy = pacman.y - ghost.y;
-            let targetAngle;
-            if (pacman.powerMode) {
-                targetAngle = Utils.randomDirection(); // Flee
-            } else if (ghost.mode === 'chase') {
-                targetAngle = Math.atan2(dy, dx);
-            } else {
-                targetAngle = Utils.randomDirection(); // Scatter
-            }
-
-            const speed = ghost.speed * delta / 16;
-            const newX = ghost.x + Math.cos(targetAngle) * speed;
-            const newY = ghost.y + Math.sin(targetAngle) * speed;
-
-            if (this.canMove(newX, newY, 7)) {
-                ghost.x = newX;
-                ghost.y = newY;
-                ghost.direction = targetAngle;
-            } else {
-                ghost.direction = Utils.randomDirection();
-            }
         }
 
         update(delta) {
-            const pac = this.entities.pacman;
-            const speed = pac.speed * delta / 16;
+            try {
+                this.pacman.move(delta, this.maze);
+                this.ghosts.forEach(ghost => ghost.move(delta, this.pacman, this.maze));
 
-            // Pacman movement
-            const newX = pac.x + Math.cos(pac.direction) * speed;
-            const newY = pac.y + Math.sin(pac.direction) * speed;
+                // Collect dots
+                this.maze.dots = this.maze.dots.filter(dot => {
+                    if (Utils.distance(this.pacman.x, this.pacman.y, dot.x, dot.y) < this.pacman.radius) {
+                        this.score += 10;
+                        this.audio.play(220);
+                        return false;
+                    }
+                    return true;
+                });
 
-            if (this.canMove(newX, newY, pac.radius)) {
-                pac.x = newX;
-                pac.y = newY;
-            }
+                // Collect power-ups
+                this.maze.powerUps = this.maze.powerUps.filter(power => {
+                    if (Utils.distance(this.pacman.x, this.pacman.y, power.x, power.y) < this.pacman.radius) {
+                        this.score += 50;
+                        this.pacman.powerMode = true;
+                        this.pacman.powerTimer = CONFIG.POWER_DURATION;
+                        this.audio.play(440);
+                        return false;
+                    }
+                    return true;
+                });
 
-            if (this.canMove(pac.x + Math.cos(pac.nextDirection) * speed,
-                           pac.y + Math.sin(pac.nextDirection) * speed, pac.radius)) {
-                pac.direction = pac.nextDirection;
-            }
-
-            // Power mode
-            if (pac.powerMode) {
-                pac.powerTimer -= delta;
-                if (pac.powerTimer <= 0) pac.powerMode = false;
-            }
-
-            // Collectibles
-            this.entities.dots = this.entities.dots.filter(dot => {
-                if (Utils.distance(pac.x, pac.y, dot.x, dot.y) < pac.radius) {
-                    this.score += 10;
-                    this.audio.play(CONFIG.AUDIO.DOT);
-                    return false;
+                // Power mode timer
+                if (this.pacman.powerMode) {
+                    this.pacman.powerTimer -= delta;
+                    if (this.pacman.powerTimer <= 0) this.pacman.powerMode = false;
                 }
-                return true;
-            });
 
-            this.entities.powerUps = this.entities.powerUps.filter(power => {
-                if (Utils.distance(pac.x, pac.y, power.x, power.y) < pac.radius) {
-                    this.score += 50;
-                    pac.powerMode = true;
-                    pac.powerTimer = CONFIG.POWER_DURATION;
-                    this.audio.play(CONFIG.AUDIO.POWER);
-                    return false;
-                }
-                return true;
-            });
-
-            // Ghost movement
-            this.entities.ghosts.forEach(ghost => {
-                this.updateGhostAI(ghost, pac, delta);
-
-                if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
-                    if (pac.powerMode) {
-                        ghost.x = Utils.tileToPixel(13.5);
-                        ghost.y = Utils.tileToPixel(11);
-                        this.score += 200;
-                    } else {
-                        pac.lives--;
-                        this.audio.play(CONFIG.AUDIO.DEATH, 300);
-                        this.entities.reset();
-                        if (pac.lives <= 0) {
-                            this.state = 'gameover';
-                            if (this.score > this.highScore) {
-                                this.highScore = this.score;
-                                localStorage.setItem('pacmanHigh', this.highScore);
+                // Ghost collision
+                this.ghosts.forEach(ghost => {
+                    if (Utils.distance(ghost.x, ghost.y, this.pacman.x, this.pacman.y) < this.pacman.radius + 7) {
+                        if (this.pacman.powerMode) {
+                            ghost.reset();
+                            this.score += 200;
+                        } else {
+                            this.pacman.lives--;
+                            this.audio.play(110, 300);
+                            this.pacman.reset();
+                            if (this.pacman.lives <= 0) {
+                                this.state = 'gameover';
+                                if (this.score > this.highScore) {
+                                    this.setHighScore(this.score);
+                                    this.highScore = this.score;
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
 
-            if (this.entities.dots.length === 0 && this.entities.powerUps.length === 0) {
-                this.state = 'win';
+                if (this.maze.dots.length === 0 && this.maze.powerUps.length === 0) {
+                    this.state = 'win';
+                }
+            } catch (e) {
+                console.error('Update error:', e);
+                this.state = 'error';
             }
         }
 
         render(timestamp) {
-            const pac = this.entities.pacman;
-            ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            try {
+                ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                this.maze.render(ctx);
+                this.pacman.render(ctx, timestamp);
+                this.ghosts.forEach(ghost => ghost.render(ctx, this.pacman));
 
-            // Maze
-            ctx.fillStyle = CONFIG.COLORS.WALL;
-            for (let y = 0; y < MAZE.length; y++) {
-                for (let x = 0; x < MAZE[y].length; x++) {
-                    if (MAZE[y][x] === '#') {
-                        ctx.fillRect(x * CONFIG.TILE_SIZE, y * CONFIG.TILE_SIZE,
-                                   CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
-                    }
-                }
-            }
-
-            // Dots and Power-ups
-            ctx.fillStyle = CONFIG.COLORS.TEXT;
-            this.entities.dots.forEach(dot => {
-                ctx.beginPath();
-                ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
-                ctx.fill();
-            });
-            this.entities.powerUps.forEach(power => {
-                ctx.beginPath();
-                ctx.arc(power.x, power.y, 4, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            // Pacman
-            ctx.fillStyle = pac.powerMode ? 
-                `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
-            pac.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
-            ctx.beginPath();
-            ctx.arc(pac.x, pac.y, pac.radius, 
-                   pac.direction + pac.mouthAngle, 
-                   pac.direction + 2 * Math.PI - pac.mouthAngle);
-            ctx.lineTo(pac.x, pac.y);
-            ctx.fill();
-
-            // Ghosts
-            this.entities.ghosts.forEach(ghost => {
-                ctx.fillStyle = pac.powerMode ? CONFIG.COLORS.FRIGHTENED : ghost.color;
-                ctx.beginPath();
-                ctx.arc(ghost.x, ghost.y, 7, 0, Math.PI);
-                ctx.lineTo(ghost.x + 7, ghost.y + 7);
-                for (let i = 5; i >= -5; i -= 2) {
-                    ctx.lineTo(ghost.x + i, ghost.y + (Math.abs(i) === 5 ? 7 : 5));
-                }
-                ctx.fill();
-
+                // HUD
                 ctx.fillStyle = CONFIG.COLORS.TEXT;
-                ctx.beginPath();
-                ctx.arc(ghost.x - 3, ghost.y - 2, 2, 0, Math.PI * 2);
-                ctx.arc(ghost.x + 3, ghost.y - 2, 2, 0, Math.PI * 2);
-                ctx.fill();
-            });
+                ctx.font = '16px Arial';
+                ctx.fillText(`Score: ${this.score}`, 10, 20);
+                ctx.fillText(`High: ${this.highScore}`, 150, 20);
+                ctx.fillText(`Lives: ${this.pacman.lives}`, 360, 20);
+                ctx.fillText(`PAC-MAN ${CONFIG.VERSION}`, CONFIG.CANVAS_WIDTH - 120, 20);
 
-            // HUD
-            ctx.fillStyle = CONFIG.COLORS.TEXT;
-            ctx.font = '16px Arial';
-            ctx.fillText(`Score: ${this.score}`, 10, 20);
-            ctx.fillText(`High: ${this.highScore}`, 150, 20);
-            ctx.fillText(`Lives: ${pac.lives}`, 360, 20);
-
-            if (this.state !== 'playing') {
-                ctx.font = '32px Arial';
-                ctx.fillText(this.state === 'win' ? 'You Win!' : 'Game Over',
-                           canvas.width/2 - 80, canvas.height/2);
+                if (this.state !== 'playing') {
+                    ctx.font = '32px Arial';
+                    ctx.fillText(this.state === 'win' ? 'You Win!' : 'Game Over', canvas.width / 2 - 80, canvas.height / 2);
+                }
+            } catch (e) {
+                console.error('Render error:', e);
+                this.state = 'error';
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                ctx.font = '20px Arial';
+                ctx.fillText('Rendering failed. Refresh to retry.', 50, canvas.height / 2);
             }
         }
 
@@ -432,22 +504,30 @@
                     this.state = 'error';
                     ctx.fillStyle = CONFIG.COLORS.TEXT;
                     ctx.font = '20px Arial';
-                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height/2);
+                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
                 }
             };
-            requestAnimationFrame(loop);
+            try {
+                requestAnimationFrame(loop);
+            } catch (e) {
+                console.error('Animation frame request failed:', e);
+                this.state = 'error';
+                ctx.fillStyle = CONFIG.COLORS.TEXT;
+                ctx.font = '20px Arial';
+                ctx.fillText('Animation not supported. Refresh to retry.', 50, canvas.height / 2);
+            }
         }
     }
 
     // Bootstrap
     try {
-        if (!canvas.getContext) throw new Error('Canvas not supported');
+        if (!canvas || !ctx) throw new Error('Canvas initialization failed');
         if (!window.requestAnimationFrame) {
-            window.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+            window.requestAnimationFrame = (callback) => setTimeout(callback, 16);
         }
-        new PacmanGame();
+        new Game();
     } catch (e) {
-        console.error('Initialization failed:', e);
-        document.body.textContent = 'Pacman failed to start. Check browser compatibility.';
+        console.error('PAC-MAN initialization failed:', e);
+        document.body.textContent = 'PAC-MAN failed to start. Check browser compatibility or console for details.';
     }
 })();
