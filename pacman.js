@@ -17,10 +17,10 @@
             PACMAN: 2.5,
             GHOST: 2
         },
-        POWER_DURATION: 5000
+        POWER_DURATION: 5000,
+        MODE_SWITCH_INTERVAL: 7000
     });
 
-    // Maze Layout with Tunnels
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
@@ -162,8 +162,7 @@
         wrapAround(x, y) {
             if (x < 0) x = CONFIG.CANVAS_WIDTH - CONFIG.TILE_SIZE;
             if (x >= CONFIG.CANVAS_WIDTH) x = 0;
-            if (y < 0) y = CONFIG.CANVAS_HEIGHT - CONFIG.TILE_SIZE;
-            if (y >= CONFIG.CANVAS_HEIGHT) y = 0;
+            if (y < 0 || y >= CONFIG.CANVAS_HEIGHT) y = Math.max(0, Math.min(y, CONFIG.CANVAS_HEIGHT - CONFIG.TILE_SIZE));
             return { x, y };
         }
     }
@@ -198,6 +197,10 @@
 
             let nextX = this.x + Math.cos(this.nextDirection) * speed;
             let nextY = this.y + Math.sin(this.nextDirection) * speed;
+            wrapped = maze.wrapAround(nextX, nextY);
+            nextX = wrapped.x;
+            nextY = wrapped.y;
+
             if (maze.canMove(nextX, nextY, this.radius)) {
                 this.direction = this.nextDirection;
             }
@@ -211,6 +214,15 @@
             ctx.lineTo(this.x, this.y);
             ctx.fill();
         }
+
+        reset() {
+            this.x = Utils.tileToPixel(13.5);
+            this.y = Utils.tileToPixel(23);
+            this.direction = 0;
+            this.nextDirection = 0;
+            this.powerMode = false;
+            this.powerTimer = 0;
+        }
     }
 
     // Ghost Module
@@ -222,14 +234,14 @@
             this.speed = CONFIG.SPEEDS.GHOST;
             this.direction = Utils.randomDirection();
             this.mode = 'scatter';
-            this.modeTimer = 0;
+            this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
         }
 
         move(delta, pacman, maze) {
             this.modeTimer -= delta;
             if (this.modeTimer <= 0) {
                 this.mode = this.mode === 'scatter' ? 'chase' : 'scatter';
-                this.modeTimer = 7000;
+                this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
             }
 
             let targetAngle;
@@ -255,7 +267,20 @@
                 this.y = newY;
                 this.direction = targetAngle;
             } else {
-                this.direction = Utils.randomDirection();
+                // Try to find a valid direction
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    this.direction = Utils.randomDirection();
+                    newX = this.x + Math.cos(this.direction) * speed;
+                    newY = this.y + Math.sin(this.direction) * speed;
+                    wrapped = maze.wrapAround(newX, newY);
+                    newX = wrapped.x;
+                    newY = wrapped.y;
+                    if (maze.canMove(newX, newY, 7)) {
+                        this.x = newX;
+                        this.y = newY;
+                        break;
+                    }
+                }
             }
         }
 
@@ -273,6 +298,14 @@
             ctx.arc(this.x - 3, this.y - 2, 2, 0, Math.PI * 2);
             ctx.arc(this.x + 3, this.y - 2, 2, 0, Math.PI * 2);
             ctx.fill();
+        }
+
+        reset() {
+            this.x = Utils.tileToPixel(13.5);
+            this.y = Utils.tileToPixel(11);
+            this.direction = Utils.randomDirection();
+            this.mode = 'scatter';
+            this.modeTimer = CONFIG.MODE_SWITCH_INTERVAL;
         }
     }
 
@@ -310,6 +343,7 @@
                 if (keyMap[key]) {
                     this.keysPressed.add(key);
                     this.pacman.nextDirection = keyMap[key];
+                    console.log(`Key pressed: ${key}, Direction: ${this.pacman.nextDirection}`);
                 }
             });
 
@@ -320,10 +354,16 @@
                 if (this.keysPressed.size > 0) {
                     const lastKey = Array.from(this.keysPressed).pop();
                     this.pacman.nextDirection = keyMap[lastKey];
+                    console.log(`Key released, new direction: ${this.pacman.nextDirection}`);
+                } else {
+                    this.pacman.nextDirection = this.pacman.direction; // Maintain current direction
                 }
             });
 
-            canvas.addEventListener('click', () => canvas.focus());
+            canvas.addEventListener('click', () => {
+                canvas.focus();
+                console.log('Canvas focused');
+            });
         }
 
         update(delta) {
@@ -362,14 +402,12 @@
             this.ghosts.forEach(ghost => {
                 if (Utils.distance(ghost.x, ghost.y, this.pacman.x, this.pacman.y) < this.pacman.radius + 7) {
                     if (this.pacman.powerMode) {
-                        ghost.x = Utils.tileToPixel(13.5);
-                        ghost.y = Utils.tileToPixel(11);
+                        ghost.reset();
                         this.score += 200;
                     } else {
                         this.pacman.lives--;
                         this.audio.play(110, 300);
-                        this.pacman.x = Utils.tileToPixel(13.5);
-                        this.pacman.y = Utils.tileToPixel(23);
+                        this.pacman.reset();
                         if (this.pacman.lives <= 0) {
                             this.state = 'gameover';
                             if (this.score > this.highScore) {
@@ -412,11 +450,19 @@
                 const delta = Utils.clamp(timestamp - this.lastTime, 0, 100);
                 this.lastTime = timestamp;
 
-                if (this.state === 'playing') {
-                    this.update(delta);
+                try {
+                    if (this.state === 'playing') {
+                        this.update(delta);
+                    }
+                    this.render(timestamp);
+                    requestAnimationFrame(loop);
+                } catch (error) {
+                    console.error('Game loop error:', error);
+                    this.state = 'error';
+                    ctx.fillStyle = CONFIG.COLORS.TEXT;
+                    ctx.font = '20px Arial';
+                    ctx.fillText('Game Crashed! Refresh to retry.', 50, canvas.height / 2);
                 }
-                this.render(timestamp);
-                requestAnimationFrame(loop);
             };
             requestAnimationFrame(loop);
         }
