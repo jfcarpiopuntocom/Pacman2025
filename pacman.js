@@ -6,7 +6,7 @@
     const CONFIG = Object.freeze({
         TILE_SIZE: 16,
         CANVAS_WIDTH: 448,  // 28 * 16
-        CANVAS_HEIGHT: 496, // 31 * 16 (adjusted to fit 28x31 maze)
+        CANVAS_HEIGHT: 496, // 31 * 16
         COLORS: Object.freeze({
             BACKGROUND: '#000000',
             WALL: '#0000FF',
@@ -32,8 +32,7 @@
         })
     });
 
-    // Maze from your code, converted to character format
-    // 1 = '#', 0 = '.', 3 = 'o', 2 = '@', 4 = ' '
+    // Your Maze Layout Converted (28x31)
     const MAZE = Object.freeze([
         "############################",
         "#............##............#",
@@ -88,7 +87,8 @@
             return Math.max(min, Math.min(max, value));
         },
         randomDirection() {
-            return [0, Math.PI/2, Math.PI, -Math.PI/2][Math.floor(Math.random() * 4)];
+            const dirs = [0, Math.PI/2, Math.PI, -Math.PI/2];
+            return dirs[Math.floor(Math.random() * dirs.length)];
         },
         getTile(x, y) {
             return {
@@ -127,7 +127,7 @@
     class EntityManager {
         constructor() {
             this.pacman = {
-                x: 13.5 * CONFIG.TILE_SIZE, // Starting at index 490 adjusted
+                x: 13.5 * CONFIG.TILE_SIZE, // Index 490 (23 * 28 + 13)
                 y: 23 * CONFIG.TILE_SIZE,
                 speed: CONFIG.SPEEDS.PACMAN,
                 direction: 0,
@@ -139,10 +139,13 @@
                 powerTimer: 0
             };
 
-            this.ghosts = CONFIG.COLORS.GHOSTS.map((color, i) => ({
-                x: (i === 0 ? 12 : i === 1 ? 14 : i === 2 ? 12 : 14) * CONFIG.TILE_SIZE, // Adjusted from your ghost start indices
-                y: (i < 2 ? 13 : 14) * CONFIG.TILE_SIZE,
-                color,
+            this.ghosts = [
+                { color: CONFIG.COLORS.GHOSTS[0], x: 12 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE }, // Blinky: 348
+                { color: CONFIG.COLORS.GHOSTS[1], x: 14 * CONFIG.TILE_SIZE, y: 13 * CONFIG.TILE_SIZE }, // Pinky: 376
+                { color: CONFIG.COLORS.GHOSTS[2], x: 13 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE }, // Inky: 351
+                { color: CONFIG.COLORS.GHOSTS[3], x: 15 * CONFIG.TILE_SIZE, y: 14 * CONFIG.TILE_SIZE }  // Clyde: 379
+            ].map(g => ({
+                ...g,
                 speed: CONFIG.SPEEDS.GHOST,
                 direction: Utils.randomDirection(),
                 frightened: false,
@@ -166,8 +169,8 @@
             });
             this.ghosts.forEach((g, i) => {
                 Object.assign(g, {
-                    x: (i === 0 ? 12 : i === 1 ? 14 : i === 2 ? 12 : 14) * CONFIG.TILE_SIZE,
-                    y: (i < 2 ? 13 : 14) * CONFIG.TILE_SIZE,
+                    x: [12, 14, 13, 15][i] * CONFIG.TILE_SIZE,
+                    y: [13, 13, 14, 14][i] * CONFIG.TILE_SIZE,
                     direction: Utils.randomDirection(),
                     frightened: false,
                     mode: 'scatter',
@@ -198,13 +201,13 @@
                 for (let x = 0; x < MAZE[y].length; x++) {
                     if (MAZE[y][x] === '.') {
                         this.entities.dots.push({
-                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2,
-                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2
+                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
                         });
                     } else if (MAZE[y][x] === 'o') {
                         this.entities.powerUps.push({
-                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2,
-                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE/2
+                            x: x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2,
+                            y: y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2
                         });
                     }
                 }
@@ -264,8 +267,8 @@
                 { angle: Math.PI/2, dx: 0, dy: 1 }
             ];
             return directions.filter(dir => 
-                this.canMove(x + dir.dx * CONFIG.TILE_SIZE/2, 
-                           y + dir.dy * CONFIG.TILE_SIZE/2, radius));
+                this.canMove(x + dir.dx * CONFIG.TILE_SIZE / 2, 
+                           y + dir.dy * CONFIG.TILE_SIZE / 2, radius));
         }
 
         updateGhostAI(ghost, pacTile, delta) {
@@ -395,7 +398,8 @@
                     ghost.x = ghostX;
                     ghost.y = ghostY;
                 } else {
-                    ghost.direction = this.getAvailableDirections(ghost.x, ghost.y, 7)[0]?.angle || ghost.direction;
+                    const dirs = this.getAvailableDirections(ghost.x, ghost.y, 7);
+                    ghost.direction = dirs.length > 0 ? dirs[0].angle : ghost.direction;
                 }
 
                 if (Utils.distance(ghost.x, ghost.y, pac.x, pac.y) < pac.radius + 7) {
@@ -428,6 +432,7 @@
             ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+            // Render maze
             ctx.fillStyle = CONFIG.COLORS.WALL;
             for (let y = 0; y < MAZE.length; y++) {
                 for (let x = 0; x < MAZE[y].length; x++) {
@@ -438,6 +443,7 @@
                 }
             }
 
+            // Render dots and power-ups
             ctx.fillStyle = CONFIG.COLORS.TEXT;
             this.entities.dots.forEach(dot => {
                 ctx.beginPath();
@@ -450,6 +456,7 @@
                 ctx.fill();
             });
 
+            // Render Pacman
             ctx.fillStyle = pac.powerMode ? 
                 `hsl(${timestamp % 360}, 100%, 50%)` : CONFIG.COLORS.PACMAN;
             pac.mouthAngle = Math.sin(timestamp * 0.01) * 0.5 + 0.5;
@@ -460,6 +467,7 @@
             ctx.lineTo(pac.x, pac.y);
             ctx.fill();
 
+            // Render ghosts
             this.entities.ghosts.forEach(ghost => {
                 ctx.fillStyle = ghost.frightened ? CONFIG.COLORS.FRIGHTENED : ghost.color;
                 ctx.beginPath();
@@ -477,6 +485,7 @@
                 ctx.fill();
             });
 
+            // HUD
             ctx.fillStyle = CONFIG.COLORS.TEXT;
             ctx.font = '16px Arial';
             ctx.fillText(`Score: ${this.score}`, 10, 20);
